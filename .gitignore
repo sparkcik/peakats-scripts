@@ -1,1 +1,6 @@
 .env
+gmail_token.json
+fadv_entry_results/
+gcic_output/
+fonts/
+gcic_template.pdf
