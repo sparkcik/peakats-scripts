@@ -11,7 +11,7 @@ Auth:    X-Forge-Key header (set in FORGE_RUNNER_KEY env var)
 Logging: ~/peakats-scripts/logs/forge_runner.log
 
 Usage:
-    python3 forge_runner.py
+    python3 infra/forge_runner.py
 
 Managed by launchd (com.crucible.forge-runner.plist)
 """
@@ -27,11 +27,11 @@ from flask import Flask, request, jsonify
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 PORT = 5678
-SCRIPTS_DIR = Path.home() / "peakats-scripts"
-LOG_DIR = SCRIPTS_DIR / "logs"
+SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", str(Path.home() / "peakats-scripts")))
+LOG_DIR = Path(os.environ.get("LOG_DIR", str(SCRIPTS_DIR / "logs")))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Auth key — set FO_RGERUNNER_KEY in environment or launchd plist
+# Auth key — set FORGE_RUNNER_KEY in environment or launchd plist
 AUTH_KEY = os.environ.get("FORGE_RUNNER_KEY", "forge-local-2026")
 
 # ── Command Whitelist ───────────────────────────────────────────────────────────
@@ -40,40 +40,50 @@ AUTH_KEY = os.environ.get("FORGE_RUNNER_KEY", "forge-local-2026")
 
 WHITELIST = {
     "fadv_update": {
-        "script": str(SCRIPTS_DIR / "peak_fadv_update_v6.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.py"),
         "description": "FADV reconciliation — sync BG/drug status from CSV exports to Supabase",
         "allowed_args": ["--batch", "--client"],
     },
     "fadv_update_batch": {
-        "script": str(SCRIPTS_DIR / "peak_fadv_update_v6.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.py"),
         "description": "FADV reconciliation — all clients batch mode",
         "fixed_args": ["--batch"],
         "allowed_args": [],
     },
     "rig_process": {
-        "script": str(SCRIPTS_DIR / "peak_rig_processor_v2.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_rig_processor_v2.py"),
         "description": "Resume scoring via Gemini — process new resumes for a client",
         "allowed_args": ["--client", "--limit", "--create-unmatched"],
     },
     "batch_process": {
-        "script": str(SCRIPTS_DIR / "peak_process_batch_v2.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_process_batch_v2.py"),
         "description": "Batch resume processing — full pipeline for a client folder",
         "allowed_args": ["--client"],
     },
     "find_missing": {
-        "script": str(SCRIPTS_DIR / "find_missing_resumes.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "find_missing_resumes.py"),
         "description": "Find candidates with no RWP score",
         "allowed_args": ["--client"],
     },
     "score_missing": {
-        "script": str(SCRIPTS_DIR / "score_missing_resumes.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "score_missing_resumes.py"),
         "description": "Score candidates that have resumes but no RWP score",
         "allowed_args": ["--client"],
     },
     "gcic_batch": {
-        "script": str(SCRIPTS_DIR / "gcic_batch_filler.py"),
+        "script": str(SCRIPTS_DIR / "gcic_batch_filler_v3.py"),
         "description": "Generate GCIC PDFs from Google Sheet responses",
-        "allowed_args": ["--row", "--limit", "--dry-run"],
+        "allowed_args": ["--row", "--limit", "--dry-run", "--client", "--name", "--no-sig"],
+    },
+    "fadv_bot": {
+        "script": str(SCRIPTS_DIR / "fadv" / "fadv_entry_bot.py"),
+        "description": "FADV entry bot — submit candidates to FADV portal",
+        "allowed_args": ["--client", "--test", "--list"],
+    },
+    "shell": {
+        "script": "__shell__",
+        "description": "Read-only shell commands for Forge file audits (find, ls, cat, git)",
+        "allowed_args": ["cmd"],
     },
     "ping": {
         "script": None,
@@ -81,6 +91,9 @@ WHITELIST = {
         "allowed_args": [],
     },
 }
+
+# ── Safe shell commands (read-only whitelist) ───────────────────────────────────
+SAFE_SHELL_PREFIXES = ("find ", "ls ", "cat ", "head ", "tail ", "wc ", "git ", "echo ")
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
@@ -105,11 +118,6 @@ def authenticate(req):
 
 
 def build_command(command: str, args: dict) -> list | None:
-    """
-    Build the subprocess command from alias + args.
-    Validates all args against whitelist.
-    Returns None if validation fails.
-    """
     spec = WHITELIST.get(command)
     if not spec:
         return None, f"Unknown command: {command}"
@@ -117,17 +125,24 @@ def build_command(command: str, args: dict) -> list | None:
     if command == "ping":
         return ["ping"], None
 
+    # Shell passthrough — read-only commands only
+    if command == "shell":
+        cmd_str = args.get("cmd", "").strip()
+        if not cmd_str:
+            return None, "cmd arg required for shell command"
+        if not any(cmd_str.startswith(p) for p in SAFE_SHELL_PREFIXES):
+            return None, f"Shell command not allowed: {cmd_str}. Allowed prefixes: {SAFE_SHELL_PREFIXES}"
+        return ["bash", "-c", cmd_str], None
+
     script = spec["script"]
     if not Path(script).exists():
         return None, f"Script not found: {script}"
 
     cmd = ["python3", script]
 
-    # Add fixed args if any
     if "fixed_args" in spec:
         cmd.extend(spec["fixed_args"])
 
-    # Validate and add caller-supplied args
     allowed = spec.get("allowed_args", [])
     for key, val in args.items():
         flag = f"--{key}" if not key.startswith("--") else key
@@ -145,27 +160,16 @@ def build_command(command: str, args: dict) -> list | None:
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Public health check — no auth required."""
     return jsonify({
         "status": "running",
         "daemon": "forge-runner",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "timestamp": datetime.now().isoformat(),
     })
 
 
 @app.route("/run", methods=["POST"])
 def run_command():
-    """
-    Execute a whitelisted command.
-
-    Body:
-        {
-            "command": "fadv_update",
-            "args": {"client": "cbm"},
-            "async": false
-        }
-    """
     if not authenticate(request):
         log.warning(f"Unauthorized request from {request.remote_addr}")
         return jsonify({"error": "Unauthorized"}), 401
@@ -180,7 +184,6 @@ def run_command():
 
     log.info(f"Received command: {command} | args: {args} | async: {run_async}")
 
-    # Handle ping
     if command == "ping":
         return jsonify({
             "status": "ok",
@@ -198,7 +201,6 @@ def run_command():
 
     try:
         if run_async:
-            # Fire and forget — return immediately
             subprocess.Popen(
                 cmd,
                 stdout=open(LOG_DIR / f"{command}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log", "w"),
@@ -212,12 +214,11 @@ def run_command():
                 "message": f"Running async. Check logs at {LOG_DIR}",
             })
         else:
-            # Synchronous — wait for completion, return output
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 min max for sync calls
+                timeout=300,
                 cwd=str(SCRIPTS_DIR),
             )
             return jsonify({
@@ -241,10 +242,8 @@ def run_command():
 
 @app.route("/whitelist", methods=["GET"])
 def list_whitelist():
-    """Return available commands. Requires auth."""
     if not authenticate(request):
         return jsonify({"error": "Unauthorized"}), 401
-
     return jsonify({
         "commands": {
             name: {
@@ -260,11 +259,12 @@ def list_whitelist():
 
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info("forge-runner starting")
+    log.info("forge-runner v1.1.0 starting")
     log.info(f"Port:        {PORT}")
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
     log.info(f"Whitelist:   {list(WHITELIST.keys())}")
     log.info("=" * 60)
 
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    port = int(os.environ.get("PORT", 5678))
+    app.run(host="0.0.0.0", port=port, debug=False)
