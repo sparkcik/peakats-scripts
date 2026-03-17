@@ -92,6 +92,11 @@ WHITELIST = {
         "description": "Health check — returns daemon status",
         "allowed_args": [],
     },
+    "rc_inbox": {
+        "script": str(SCRIPTS_DIR / "rc_inbox_command.py"),
+        "description": "Read RC SMS inbox for 470-857-4325 — returns inbound messages with candidate matches",
+        "allowed_args": ["--limit", "--unread-only", "--mark-read", "--format"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
