@@ -70,15 +70,15 @@ WHITELIST = {
         "description": "Score candidates that have resumes but no RWP score",
         "allowed_args": ["--client"],
     },
-    "gcic_batch": {
-        "script": str(SCRIPTS_DIR / "gcic_batch_filler_v3.py"),
-        "description": "Generate GCIC PDFs from Google Sheet responses",
-        "allowed_args": ["--row", "--limit", "--dry-run", "--client", "--name", "--no-sig"],
-    },
     "fadv_bot": {
         "script": str(SCRIPTS_DIR / "fadv" / "fadv_entry_bot.py"),
         "description": "FADV entry bot — submit candidates to FADV portal",
         "allowed_args": ["--client", "--test", "--list"],
+    },
+    "sms_queue": {
+        "script": str(SCRIPTS_DIR / "sms_queue_poller.py"),
+        "description": "SMS queue poller — send pending scheduled messages via RingCentral",
+        "allowed_args": ["--dry-run"],
     },
     "shell": {
         "script": "__shell__",
