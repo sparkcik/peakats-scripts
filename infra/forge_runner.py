@@ -151,14 +151,24 @@ def build_command(command: str, args: dict) -> list | None:
         cmd.extend(spec["fixed_args"])
 
     allowed = spec.get("allowed_args", [])
-    for key, val in args.items():
-        flag = f"--{key}" if not key.startswith("--") else key
-        flag_bare = flag.lstrip("-")
-        if f"--{flag_bare}" not in [f"--{a}" for a in allowed]:
-            return None, f"Arg not allowed for {command}: {flag}"
-        cmd.append(flag)
-        if val is not None and val != "":
-            cmd.append(str(val))
+    if isinstance(args, list):
+        # List-style args: validate each flag against the whitelist
+        for arg in args:
+            arg_str = str(arg)
+            if arg_str.startswith("--"):
+                flag_bare = arg_str.lstrip("-")
+                if f"--{flag_bare}" not in [f"--{a}" for a in allowed]:
+                    return None, f"Arg not allowed for {command}: {arg_str}"
+            cmd.append(arg_str)
+    else:
+        for key, val in args.items():
+            flag = f"--{key}" if not key.startswith("--") else key
+            flag_bare = flag.lstrip("-")
+            if f"--{flag_bare}" not in [f"--{a}" for a in allowed]:
+                return None, f"Arg not allowed for {command}: {flag}"
+            cmd.append(flag)
+            if val is not None and val != "":
+                cmd.append(str(val))
 
     return cmd, None
 
