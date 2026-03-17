@@ -20,7 +20,9 @@ import os
 import subprocess
 import logging
 import json
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, request, jsonify
 
@@ -255,16 +257,52 @@ def list_whitelist():
     })
 
 
+# ── Scheduler — SMS Queue Poller (daily 11:30 UTC / 7:30 AM ET) ───────────────
+
+def _sms_scheduler():
+    """Background thread: fires sms_queue_poller.py once daily at 11:30 UTC."""
+    last_run_date = None
+    script = str(SCRIPTS_DIR / "sms_queue_poller.py")
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            today = now.date()
+            if now.hour == 11 and now.minute == 30 and last_run_date != today:
+                last_run_date = today
+                log.info("[scheduler] Triggering sms_queue_poller.py (11:30 UTC)")
+                result = subprocess.run(
+                    ["python3", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(SCRIPTS_DIR),
+                )
+                log.info(f"[scheduler] sms_queue_poller exit={result.returncode}")
+                if result.stdout:
+                    for line in result.stdout.strip().splitlines():
+                        log.info(f"[scheduler] {line}")
+                if result.stderr:
+                    for line in result.stderr.strip().splitlines():
+                        log.warning(f"[scheduler] {line}")
+        except Exception as e:
+            log.error(f"[scheduler] sms_queue_poller error: {e}")
+        time.sleep(60)
+
+
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info("forge-runner v1.1.0 starting")
+    log.info("forge-runner v1.2.0 starting")
     log.info(f"Port:        {PORT}")
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
     log.info(f"Whitelist:   {list(WHITELIST.keys())}")
+    log.info("Scheduler:   sms_queue_poller @ 11:30 UTC daily")
     log.info("=" * 60)
+
+    scheduler = threading.Thread(target=_sms_scheduler, daemon=True)
+    scheduler.start()
 
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)
