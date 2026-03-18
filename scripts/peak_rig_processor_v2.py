@@ -32,6 +32,12 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple, List
 from difflib import SequenceMatcher
 from sqlalchemy import create_engine, text
+from docx import Document as DocxDocument
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.enums import TA_LEFT
 
 # Database URL
 DB_URL = "postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require"
@@ -502,6 +508,78 @@ class ResumeProcessor:
             })
             conn.commit()
     
+    def convert_to_pdf(self, file_path: Path, archive_folder: Path = None) -> Optional[Path]:
+        """
+        Convert a .docx, .doc, or .txt file to PDF using python-docx and reportlab.
+        Archives the original to archive_folder if provided, deletes it otherwise.
+        Returns the Path to the new PDF, or None on failure.
+        """
+        try:
+            pdf_path = file_path.with_suffix('.pdf')
+
+            # Extract text based on file type
+            if file_path.suffix.lower() in ('.docx', '.doc'):
+                try:
+                    doc = DocxDocument(str(file_path))
+                    paragraphs = [p.text for p in doc.paragraphs]
+                except Exception as e:
+                    print(f"  ⚠️  Could not read {file_path.name} as docx: {e}")
+                    return None
+            elif file_path.suffix.lower() == '.txt':
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    paragraphs = f.read().splitlines()
+            else:
+                return None
+
+            # Build PDF with reportlab
+            doc_pdf = SimpleDocTemplate(
+                str(pdf_path),
+                pagesize=letter,
+                leftMargin=0.75 * inch,
+                rightMargin=0.75 * inch,
+                topMargin=0.75 * inch,
+                bottomMargin=0.75 * inch
+            )
+            styles = getSampleStyleSheet()
+            body_style = ParagraphStyle(
+                'ResumeBody',
+                parent=styles['Normal'],
+                fontSize=10,
+                leading=13,
+                alignment=TA_LEFT
+            )
+
+            story = []
+            for para_text in paragraphs:
+                if para_text.strip():
+                    # Escape XML special characters for reportlab
+                    safe_text = (para_text
+                                 .replace('&', '&amp;')
+                                 .replace('<', '&lt;')
+                                 .replace('>', '&gt;'))
+                    story.append(Paragraph(safe_text, body_style))
+                else:
+                    story.append(Spacer(1, 6))
+
+            if not story:
+                story.append(Paragraph("(empty document)", body_style))
+
+            doc_pdf.build(story)
+
+            # Archive or delete original
+            if archive_folder:
+                archive_folder.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(file_path), str(archive_folder / file_path.name))
+            else:
+                file_path.unlink()
+
+            print(f"  ✅ Converted {file_path.name} → {pdf_path.name}")
+            return pdf_path
+
+        except Exception as e:
+            print(f"  ❌ Failed to convert {file_path.name} to PDF: {e}")
+            return None
+
     def process_resumes(self, resume_folder: Path, client_id: str, limit: int = None, archive_folder: Path = None):
         """
         Process all resumes in folder for given client
@@ -513,10 +591,26 @@ class ResumeProcessor:
             limit: Max number of resumes to process (None = no limit)
             archive_folder: Where to move processed resumes (None = don't move)
         """
+        # --- Pre-pass: convert non-PDF resumes to PDF ---
+        non_pdf_exts = ('.docx', '.doc', '.txt')
+        non_pdf_files = [
+            f for f in resume_folder.iterdir()
+            if f.is_file() and f.suffix.lower() in non_pdf_exts
+        ] if resume_folder.exists() else []
+
+        converted_count = 0
+        for nf in non_pdf_files:
+            result = self.convert_to_pdf(nf, archive_folder=archive_folder)
+            if result:
+                converted_count += 1
+
+        if non_pdf_files:
+            print(f"\n📄 Pre-pass: converted {converted_count}/{len(non_pdf_files)} non-PDF files to PDF")
+
         if not resume_folder.exists():
             print(f"Resume folder not found: {resume_folder}")
             return
-        
+
         # Check if this is legacy mode (cross-client matching)
         cross_client = client_id.lower() == 'legacy'
         if cross_client:
