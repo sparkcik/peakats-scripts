@@ -206,16 +206,18 @@ class ResumeProcessor:
                 # Insert new candidate with Intake status
                 conn.execute(text("""
                     INSERT INTO candidates (
-                        client_id, first_name, last_name, 
+                        client_id, first_name, last_name,
                         phone, email,
                         rwp_score, rwp_classification, rwp_rationale,
                         resume_filename, status, tag,
+                        import_source, source_channel,
                         created_at, updated_at
                     ) VALUES (
                         :client_id, :first_name, :last_name,
                         :phone, :email,
                         :rwp_score, :rwp_classification, :rwp_rationale,
                         :resume_filename, 'Intake', 'Driver',
+                        'resume_direct', 'resume_direct',
                         NOW(), NOW()
                     )
                 """), {
@@ -482,30 +484,54 @@ class ResumeProcessor:
             
             return None, 'none', 0.0, suggested_matches
     
-    def update_candidate_with_resume_data(self, candidate_id: int, resume_data: Dict, 
+    def update_candidate_with_resume_data(self, candidate_id: int, resume_data: Dict,
                                          resume_path: Path, match_method: str, confidence: float):
-        """Update candidate record with parsed resume data in Supabase"""
+        """Update candidate record with parsed resume data in Supabase.
+        Also promotes status Intake → Active when rwp_score >= 6,
+        and sets tag = 'Driver' if tag is NULL."""
+        rwp_score = resume_data.get('rwp_score')
+
         with self.engine.connect() as conn:
-            conn.execute(text("""
-                UPDATE candidates
-                SET rwp_score = :rwp_score,
-                    rwp_classification = :rwp_classification,
-                    rwp_rationale = :rwp_rationale,
-                    resume_filename = :resume_filename,
-                    resume_processed_date = NOW(),
-                    resume_match_method = :match_method,
-                    resume_match_confidence = :confidence,
-                    updated_at = NOW()
-                WHERE id = :id
-            """), {
-                "rwp_score": resume_data.get('rwp_score'),
+            # Fetch current status and tag so we only promote from Intake
+            row = conn.execute(text(
+                "SELECT status, tag FROM candidates WHERE id = :id"
+            ), {"id": candidate_id}).fetchone()
+
+            current_status = row[0] if row else None
+            current_tag = row[1] if row else None
+
+            # Build dynamic SET clauses
+            set_clauses = [
+                "rwp_score = :rwp_score",
+                "rwp_classification = :rwp_classification",
+                "rwp_rationale = :rwp_rationale",
+                "resume_filename = :resume_filename",
+                "resume_processed_date = NOW()",
+                "resume_match_method = :match_method",
+                "resume_match_confidence = :confidence",
+                "updated_at = NOW()",
+            ]
+            params = {
+                "rwp_score": rwp_score,
                 "rwp_classification": resume_data.get('rwp_classification'),
                 "rwp_rationale": resume_data.get('rationale', ''),
                 "resume_filename": resume_path.name,
                 "match_method": match_method,
                 "confidence": confidence,
-                "id": candidate_id
-            })
+                "id": candidate_id,
+            }
+
+            # Promote Intake → Active when score qualifies
+            if current_status == 'Intake' and rwp_score is not None and rwp_score >= 6:
+                set_clauses.append("status = 'Active'")
+                print(f"  ⬆️  Status promoted: Intake → Active (rwp_score={rwp_score})")
+
+            # Back-fill tag if missing
+            if current_tag is None:
+                set_clauses.append("tag = 'Driver'")
+
+            sql = f"UPDATE candidates SET {', '.join(set_clauses)} WHERE id = :id"
+            conn.execute(text(sql), params)
             conn.commit()
     
     def convert_to_pdf(self, file_path: Path, archive_folder: Path = None) -> Optional[Path]:

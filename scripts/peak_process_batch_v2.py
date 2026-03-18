@@ -9,6 +9,7 @@ NOW WRITES DIRECTLY TO SUPABASE (no SQLite)
 import os
 import json
 import shutil
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
@@ -127,12 +128,34 @@ class BatchProcessor:
         
         client_inbox = self.inbox_path / client_id
         
-        # Find any CSV file in inbox (flexible naming from Indeed)
+        # CSV merge pre-pass: combine multiple CSVs into one
         csv_files = list(client_inbox.glob("*.csv"))
-        
+
         if len(csv_files) > 1:
-            self.log(f"⚠ Warning: Multiple CSV files found. Using first one.", "WARNING")
-            csv_file = csv_files[0]
+            self.log(f"\n[PRE-PASS: CSV MERGE]")
+            frames = []
+            for cf in csv_files:
+                try:
+                    frames.append(pd.read_csv(cf))
+                except Exception as e:
+                    self.log(f"⚠ Could not read {cf.name}: {e}", "WARNING")
+            if frames:
+                merged = pd.concat(frames, ignore_index=True)
+                # Dedup on email (case-insensitive), keep first occurrence
+                if 'email' in merged.columns:
+                    merged['_email_lower'] = merged['email'].astype(str).str.lower()
+                    merged = merged.drop_duplicates(subset='_email_lower', keep='first')
+                    merged = merged.drop(columns=['_email_lower'])
+                merged_name = f"candidates_merged_{self.batch_timestamp}.csv"
+                merged_path = client_inbox / merged_name
+                merged.to_csv(merged_path, index=False)
+                self.log(f"📎 Merged {len(csv_files)} CSV files → {merged_name} ({len(merged)} rows)")
+                # Remove originals
+                for cf in csv_files:
+                    cf.unlink()
+                csv_file = merged_path
+            else:
+                csv_file = None
         elif len(csv_files) == 1:
             csv_file = csv_files[0]
         else:
@@ -269,15 +292,23 @@ class BatchProcessor:
         # Phase 4: Check for orphaned candidates
         self.log(f"\n[PHASE 4: ORPHAN CHECK]")
         orphans = self.find_orphaned_candidates(client_id)
-        
+        csv_only = self.find_csv_only_candidates(client_id)
+
         if orphans:
-            self.log(f"⚠ Found {len(orphans)} orphaned candidates (no resume)", "WARNING")
-            for orphan in orphans[:5]:  # Show first 5
+            self.log(f"⚠ Found {len(orphans)} orphaned candidates (no resume file)", "WARNING")
+            for orphan in orphans[:5]:
                 self.log(f"  - {orphan['first_name']} {orphan['last_name']} ({orphan['email']})")
-            
             batch_stats['orphans'] = orphans
         else:
             self.log(f"✓ No orphaned candidates")
+
+        if csv_only:
+            self.log(f"⚠ Found {len(csv_only)} CSV-only candidates (no resume scored)", "WARNING")
+            for c in csv_only[:5]:
+                self.log(f"  - {c['first_name']} {c['last_name']} ({c['email']})")
+            batch_stats['csv_only'] = csv_only
+        else:
+            self.log(f"✓ No CSV-only candidates")
         
         return batch_stats
     
@@ -298,7 +329,26 @@ class BatchProcessor:
             """), {"client_id": client_id})
             
             return [{"id": row[0], "first_name": row[1], "last_name": row[2], "email": row[3]} for row in result]
-    
+
+    def find_csv_only_candidates(self, client_id: str) -> List[Dict]:
+        """Find candidates imported from CSV but never resume-scored (status still Intake, no RWP)"""
+        from sqlalchemy import create_engine, text
+
+        DB_URL = "postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require"
+        engine = create_engine(DB_URL)
+
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT id, first_name, last_name, email
+                FROM candidates
+                WHERE client_id = :client_id
+                AND status = 'Intake'
+                AND (rwp_score IS NULL OR rwp_score = 0)
+                AND resume_filename IS NULL
+            """), {"client_id": client_id})
+
+            return [{"id": row[0], "first_name": row[1], "last_name": row[2], "email": row[3]} for row in result]
+
     def generate_processing_report(self, all_stats: List[Dict]):
         """Generate comprehensive processing report"""
         report_lines = []
