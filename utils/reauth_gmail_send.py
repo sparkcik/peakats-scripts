@@ -4,7 +4,7 @@ PEAK — OAuth Re-Authorization for Gmail Send
 Run this once on your Mac to get a new refresh token that includes gmail.send scope.
 
 This opens a browser window. After authorizing, it prints the new refresh_token.
-Paste that token into gcic_batch_filler_v3.py → OAUTH["refresh_token"].
+Paste that token into the appropriate script's OAUTH["refresh_token"].
 
 Usage:
     python3 reauth_gmail_send.py
@@ -116,7 +116,7 @@ def main():
     print("✅ SUCCESS — New refresh token with gmail.send scope:")
     print("=" * 60)
     print(f'\nrefresh_token: "{tokens["refresh_token"]}"')
-    print("\nPaste this into gcic_batch_filler_v3.py:")
+    print("\nPaste this into your script's OAUTH config:")
     print('  OAUTH = {')
     print(f'    "refresh_token": "{tokens["refresh_token"]}",')
     print('    ... (keep client_id and client_secret as-is)')

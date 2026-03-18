@@ -25,7 +25,7 @@ from difflib import SequenceMatcher
 SUPABASE_URL = "postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require"
 
 # FADV files location
-FADV_DIR = Path.home() / "Library/CloudStorage/GoogleDrive-charles@thefoundry.llc/My Drive/PEAK/#PEAKATS/04_FADV_UPDATES"
+FADV_DIR = Path(os.path.expanduser('~')) / 'Google Drive/My Drive/CRUCIBLE OS/PEAK/04_FADV_UPDATES'
 
 
 # ─── STATUS NORMALIZATION ──────────────────────────────────────────────────────
