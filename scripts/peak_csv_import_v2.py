@@ -191,7 +191,7 @@ class CSVImporter:
                         updated_at
                     ) VALUES (
                         :client_id, :email, :phone, :first_name, :last_name,
-                        :applied_date, :job_title, :candidate_id, 'Intake',
+                        :applied_date, :job_title, :candidate_id, 'No Resume',
                         'indeed', 'indeed',
                         NOW(), NOW()
                     )

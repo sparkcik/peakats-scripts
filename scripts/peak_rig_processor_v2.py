@@ -203,7 +203,15 @@ class ResumeProcessor:
                     print(f"  ⚠️  Candidate already exists (ID: {existing[0]})")
                     return False
                 
-                # Insert new candidate with Intake status
+                # Determine status from RWP score
+                rwp_score = resume_data['rwp_score']
+                if rwp_score >= 3:
+                    new_status = 'Active'
+                elif rwp_score == 1:
+                    new_status = 'Rejected'
+                else:
+                    new_status = 'No Resume'
+
                 conn.execute(text("""
                     INSERT INTO candidates (
                         client_id, first_name, last_name,
@@ -211,13 +219,15 @@ class ResumeProcessor:
                         rwp_score, rwp_classification, rwp_rationale,
                         resume_filename, status, tag,
                         import_source, source_channel,
+                        reject_reason,
                         created_at, updated_at
                     ) VALUES (
                         :client_id, :first_name, :last_name,
                         :phone, :email,
                         :rwp_score, :rwp_classification, :rwp_rationale,
-                        :resume_filename, 'Intake', 'Driver',
+                        :resume_filename, :status, 'Driver',
                         'resume_direct', 'resume_direct',
+                        :reject_reason,
                         NOW(), NOW()
                     )
                 """), {
@@ -226,15 +236,17 @@ class ResumeProcessor:
                     "last_name": resume_data['last_name'],
                     "phone": resume_data.get('phone', ''),
                     "email": resume_data.get('email') if resume_data.get('email') != 'NULL' else None,
-                    "rwp_score": resume_data['rwp_score'],
+                    "rwp_score": rwp_score,
                     "rwp_classification": resume_data['rwp_classification'],
                     "rwp_rationale": resume_data.get('rationale', ''),
-                    "resume_filename": resume_path.name
+                    "resume_filename": resume_path.name,
+                    "status": new_status,
+                    "reject_reason": 'low_rwp' if new_status == 'Rejected' else None,
                 })
                 conn.commit()
-                
+
                 self.stats['created'] += 1
-                print(f"  ➕ CREATED new candidate (Intake): {resume_data['first_name']} {resume_data['last_name']}")
+                print(f"  ➕ CREATED new candidate ({new_status}): {resume_data['first_name']} {resume_data['last_name']}")
                 return True
                 
         except Exception as e:
@@ -487,12 +499,15 @@ class ResumeProcessor:
     def update_candidate_with_resume_data(self, candidate_id: int, resume_data: Dict,
                                          resume_path: Path, match_method: str, confidence: float):
         """Update candidate record with parsed resume data in Supabase.
-        Also promotes status Intake → Active when rwp_score >= 6,
-        and sets tag = 'Driver' if tag is NULL."""
+        Status promotion from 'No Resume':
+          rwp_score >= 3  → Active
+          rwp_score == 1  → Rejected (low_rwp)
+          otherwise       → no status change
+        Also sets tag = 'Driver' if tag is NULL."""
         rwp_score = resume_data.get('rwp_score')
 
         with self.engine.connect() as conn:
-            # Fetch current status and tag so we only promote from Intake
+            # Fetch current status and tag so we only promote from No Resume
             row = conn.execute(text(
                 "SELECT status, tag FROM candidates WHERE id = :id"
             ), {"id": candidate_id}).fetchone()
@@ -521,10 +536,15 @@ class ResumeProcessor:
                 "id": candidate_id,
             }
 
-            # Promote Intake → Active when score qualifies
-            if current_status == 'Intake' and rwp_score is not None and rwp_score >= 6:
-                set_clauses.append("status = 'Active'")
-                print(f"  ⬆️  Status promoted: Intake → Active (rwp_score={rwp_score})")
+            # Promote from No Resume based on score
+            if current_status == 'No Resume' and rwp_score is not None:
+                if rwp_score >= 3:
+                    set_clauses.append("status = 'Active'")
+                    print(f"  ⬆️  Status promoted: No Resume → Active (rwp_score={rwp_score})")
+                elif rwp_score == 1:
+                    set_clauses.append("status = 'Rejected'")
+                    set_clauses.append("reject_reason = 'low_rwp'")
+                    print(f"  ⬇️  Status set: No Resume → Rejected (rwp_score=1, low_rwp)")
 
             # Back-fill tag if missing
             if current_tag is None:

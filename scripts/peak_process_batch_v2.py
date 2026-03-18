@@ -269,16 +269,8 @@ class BatchProcessor:
                 resumes_folder.mkdir(parents=True, exist_ok=True)
             self.log(f"✓ Inbox folder ready: {resumes_folder}")
             
-            # Move CSV to FADV queue with prefix
+            # Archive CSV to processed folder
             if csv_file.exists():
-                fadv_prefix = self.client_registry['clients'][client_id].get('fadv_prefix', client_id.upper())
-                fadv_filename = f"{fadv_prefix}_{self.batch_timestamp}.csv"
-                fadv_dest = self.fadv_queue_path / fadv_filename
-                
-                shutil.copy(str(csv_file), str(fadv_dest))
-                self.log(f"✓ Copied CSV to FADV queue: {fadv_filename}")
-                
-                # Also archive original CSV
                 shutil.move(str(csv_file), str(processed_folder / "candidates.csv"))
                 self.log(f"✓ Archived CSV to: {processed_folder}")
             
