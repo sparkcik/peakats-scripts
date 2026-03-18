@@ -181,9 +181,6 @@ class CSVImporter:
                         phone,
                         first_name,
                         last_name,
-                        application_date,
-                        indeed_job_title,
-                        indeed_candidate_id,
                         status,
                         import_source,
                         source_channel,
@@ -191,8 +188,7 @@ class CSVImporter:
                         updated_at
                     ) VALUES (
                         :client_id, :email, :phone, :first_name, :last_name,
-                        :applied_date, :job_title, :candidate_id, 'No Resume',
-                        'indeed', 'indeed',
+                        'No Resume', 'indeed', 'indeed',
                         NOW(), NOW()
                     )
                 """), {
@@ -201,9 +197,6 @@ class CSVImporter:
                     "phone": clean_phone,
                     "first_name": first_name,
                     "last_name": last_name,
-                    "applied_date": applied_date if applied_date else None,
-                    "job_title": job_title if job_title else None,
-                    "candidate_id": candidate_id if candidate_id else None
                 })
                 conn.commit()
             
