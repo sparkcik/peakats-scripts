@@ -8,13 +8,14 @@ Duplicate check: email + client_id OR name + client_id
 """
 
 import csv
+import os
 import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple
 
 # Supabase connection - SINGLE SOURCE OF TRUTH
-SUPABASE_URL = "postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require"
+SUPABASE_URL = os.environ.get('SUPABASE_URL', 'postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require')
 
 
 class CSVImporter:
