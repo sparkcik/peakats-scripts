@@ -24,7 +24,8 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+import requests as http_requests
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,16 @@ WHITELIST = {
         "script": str(SCRIPTS_DIR / "scripts" / "rc_data_capture_cloud.py"),
         "description": "Capture RC SMS + call history to Supabase archive tables and rebuild contact export",
         "allowed_args": ["--days"],
+    },
+    "twilio_send": {
+        "script": str(SCRIPTS_DIR / "scripts" / "twilio_sms_send.py"),
+        "description": "Send pending SMS via Twilio from sms_send_queue",
+        "allowed_args": ["--dry-run", "--limit"],
+    },
+    "twilio_blast": {
+        "script": str(SCRIPTS_DIR / "scripts" / "twilio_blast.py"),
+        "description": "Blast Template 39 to unsent rc_contact_export numbers via Twilio",
+        "allowed_args": ["--dry-run", "--limit"],
     },
 }
 
@@ -279,6 +290,119 @@ def list_whitelist():
             for name, spec in WHITELIST.items()
         }
     })
+
+
+# ── Twilio Webhook Routes (public — no X-Forge-Key required) ──────────────────
+# These handle inbound Twilio SMS and voice POSTs on the existing port 8080.
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "+14704704766")
+
+_SB_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+}
+
+
+def _clean_phone(phone):
+    if not phone:
+        return ""
+    return phone.replace("+1", "").replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
+
+
+def _match_candidate(phone):
+    clean = _clean_phone(phone)
+    if not SUPABASE_URL:
+        return None
+    resp = http_requests.get(
+        f"{SUPABASE_URL}/rest/v1/candidates",
+        headers=_SB_HEADERS,
+        params={"phone": f"eq.{clean}", "select": "id,first_name,last_name,client_id,status"},
+    )
+    rows = resp.json() if resp.status_code == 200 else []
+    return rows[0] if rows else None
+
+
+TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+TWIML_GREETING = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">You have reached Kai at PEAK recruiting. Please leave a message after the tone.</Say>
+    <Record maxLength="120" action="/twilio/voice/recording" transcribe="false" />
+    <Say voice="alice">We did not receive a recording. Goodbye.</Say>
+</Response>"""
+TWIML_RECORDING_ACK = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>'
+
+
+@app.route("/twilio/sms", methods=["POST"])
+def twilio_inbound_sms():
+    from_number = request.form.get("From", "")
+    body = request.form.get("Body", "")
+    log.info(f"[twilio] Inbound SMS from {from_number}: {body[:80]}")
+    candidate = _match_candidate(from_number)
+    if candidate:
+        now = datetime.now(timezone.utc).isoformat()
+        http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/candidate_comms",
+            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+            json={
+                "candidate_id": candidate["id"],
+                "client_id": candidate["client_id"],
+                "channel": "sms",
+                "direction": "inbound",
+                "body": body,
+                "sent_at": now,
+                "sent_by": "twilio_webhook",
+                "send_mode": "automated",
+                "from_number": _clean_phone(from_number),
+                "to_number": _clean_phone(TWILIO_FROM_NUMBER),
+                "delivery_status": "delivered",
+            },
+        )
+        log.info(f"[twilio] Logged inbound SMS -> candidate {candidate['id']}")
+    else:
+        log.warning(f"[twilio] No candidate match for {from_number}")
+    return Response(TWIML_EMPTY, mimetype="application/xml")
+
+
+@app.route("/twilio/voice", methods=["POST"])
+def twilio_inbound_voice():
+    from_number = request.form.get("From", "")
+    log.info(f"[twilio] Inbound call from {from_number}")
+    return Response(TWIML_GREETING, mimetype="application/xml")
+
+
+@app.route("/twilio/voice/recording", methods=["POST"])
+def twilio_voice_recording():
+    from_number = request.form.get("From", "")
+    recording_url = request.form.get("RecordingUrl", "")
+    recording_duration = request.form.get("RecordingDuration", "0")
+    log.info(f"[twilio] Recording from {from_number}: {recording_url} ({recording_duration}s)")
+    candidate = _match_candidate(from_number)
+    if candidate:
+        now = datetime.now(timezone.utc).isoformat()
+        http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/candidate_comms",
+            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+            json={
+                "candidate_id": candidate["id"],
+                "client_id": candidate["client_id"],
+                "channel": "voice",
+                "direction": "inbound",
+                "body": f"Voicemail ({recording_duration}s): {recording_url}",
+                "sent_at": now,
+                "sent_by": "twilio_voice",
+                "send_mode": "automated",
+                "from_number": _clean_phone(from_number),
+                "to_number": _clean_phone(TWILIO_FROM_NUMBER),
+                "delivery_status": "delivered",
+            },
+        )
+        log.info(f"[twilio] Logged voicemail -> candidate {candidate['id']}")
+    else:
+        log.warning(f"[twilio] No candidate match for voicemail from {from_number}")
+    return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
 
 
 # ── Scheduler — SMS Queue Poller (daily 11:30 UTC / 7:30 AM ET) ───────────────
