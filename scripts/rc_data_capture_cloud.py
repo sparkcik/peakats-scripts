@@ -8,12 +8,15 @@ Fetches RingCentral SMS and call logs, upserts to Supabase tables:
   - rc_call_archive
   - rc_contact_export (rebuilt from archive data)
 
+Each page of results is persisted immediately so partial runs still save data.
+
 Usage:
     python3 scripts/rc_data_capture_cloud.py [--days 30]
 """
 
 import os
 import sys
+import time
 import argparse
 import logging
 from datetime import datetime, timedelta, timezone
@@ -37,6 +40,8 @@ SB_HEADERS = {
 }
 
 KAI_NUMBER = "4708574325"
+MAX_RETRIES = 3
+RETRY_BASE_WAIT = 60  # seconds
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,52 +64,21 @@ def get_rc_token():
     resp.raise_for_status()
     return resp.json()["access_token"]
 
-# -- RingCentral fetch helpers ---------------------------------------------------
+# -- Retry wrapper ---------------------------------------------------------------
 
-def fetch_sms(token, date_from):
-    """Fetch all SMS (inbound + outbound) from RC message-store since date_from."""
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{RC_SERVER}/restapi/v1.0/account/~/extension/~/message-store"
-    params = {
-        "messageType": "SMS",
-        "dateFrom": date_from,
-        "perPage": 100,
-    }
-    all_records = []
-    page = 1
-    while url:
-        resp = requests.get(url, headers=headers, params=params if page == 1 else None)
-        resp.raise_for_status()
-        data = resp.json()
-        all_records.extend(data.get("records", []))
-        nav = data.get("navigation", {})
-        next_page = nav.get("nextPage", {})
-        url = next_page.get("uri") if next_page else None
-        page += 1
-    return all_records
-
-
-def fetch_calls(token, date_from):
-    """Fetch all call logs from RC call-log API since date_from."""
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{RC_SERVER}/restapi/v1.0/account/~/extension/~/call-log"
-    params = {
-        "dateFrom": date_from,
-        "perPage": 100,
-        "view": "Simple",
-    }
-    all_records = []
-    page = 1
-    while url:
-        resp = requests.get(url, headers=headers, params=params if page == 1 else None)
-        resp.raise_for_status()
-        data = resp.json()
-        all_records.extend(data.get("records", []))
-        nav = data.get("navigation", {})
-        next_page = nav.get("nextPage", {})
-        url = next_page.get("uri") if next_page else None
-        page += 1
-    return all_records
+def rc_get_with_retry(url, headers, params=None):
+    """GET with exponential backoff on 429. Waits 60s, 120s, 240s."""
+    for attempt in range(MAX_RETRIES + 1):
+        resp = requests.get(url, headers=headers, params=params)
+        if resp.status_code != 429:
+            resp.raise_for_status()
+            return resp
+        if attempt == MAX_RETRIES:
+            log.error(f"429 rate limit after {MAX_RETRIES} retries, giving up")
+            resp.raise_for_status()
+        wait = RETRY_BASE_WAIT * (2 ** attempt)
+        log.warning(f"429 rate limited, waiting {wait}s (attempt {attempt + 1}/{MAX_RETRIES})")
+        time.sleep(wait)
 
 # -- Phone normalization ---------------------------------------------------------
 
@@ -151,6 +125,102 @@ def upsert_batch(table, rows, batch_size=200):
         total += len(batch)
     return total
 
+# -- SMS row transform -----------------------------------------------------------
+
+def transform_sms_page(records, phone_map):
+    """Convert a page of RC SMS records to rc_sms_archive rows."""
+    rows = []
+    for msg in records:
+        from_num = clean_phone(msg.get("from", {}).get("phoneNumber", ""))
+        to_list = msg.get("to", [])
+        to_num = clean_phone(to_list[0].get("phoneNumber", "")) if to_list else ""
+        direction = msg.get("direction", "").lower()
+        other_num = from_num if direction == "inbound" else to_num
+        rows.append({
+            "message_id": msg["id"],
+            "from_number": from_num,
+            "to_number": to_num,
+            "body": msg.get("subject", ""),
+            "direction": direction,
+            "received_at": msg.get("creationTime"),
+            "read_status": msg.get("readStatus", ""),
+            "candidate_id": phone_map.get(other_num),
+        })
+    return rows
+
+# -- Call row transform ----------------------------------------------------------
+
+def transform_call_page(records, phone_map):
+    """Convert a page of RC call-log records to rc_call_archive rows."""
+    rows = []
+    for call in records:
+        from_num = clean_phone(call.get("from", {}).get("phoneNumber", ""))
+        to_num = clean_phone(call.get("to", {}).get("phoneNumber", ""))
+        direction = call.get("direction", "").lower()
+        other_num = from_num if direction == "inbound" else to_num
+        rows.append({
+            "call_id": call["id"],
+            "from_number": from_num,
+            "to_number": to_num,
+            "direction": direction,
+            "duration_seconds": call.get("duration", 0),
+            "start_time": call.get("startTime"),
+            "result": call.get("result", ""),
+            "candidate_id": phone_map.get(other_num),
+        })
+    return rows
+
+# -- Fetch + persist per page ----------------------------------------------------
+
+def fetch_and_persist_sms(token, date_from, phone_map):
+    """Fetch SMS page by page, upsert each page immediately. Returns all rows."""
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{RC_SERVER}/restapi/v1.0/account/~/extension/~/message-store"
+    params = {"messageType": "SMS", "dateFrom": date_from, "perPage": 100}
+    all_rows = []
+    page = 1
+    total_persisted = 0
+    while url:
+        resp = rc_get_with_retry(url, headers, params=params if page == 1 else None)
+        data = resp.json()
+        records = data.get("records", [])
+        rows = transform_sms_page(records, phone_map)
+        if rows:
+            upsert_batch("rc_sms_archive", rows)
+            total_persisted += len(rows)
+            log.info(f"SMS page {page}: fetched {len(records)}, persisted {total_persisted} total")
+        all_rows.extend(rows)
+        nav = data.get("navigation", {})
+        next_page = nav.get("nextPage", {})
+        url = next_page.get("uri") if next_page else None
+        page += 1
+    return all_rows, total_persisted
+
+
+def fetch_and_persist_calls(token, date_from, phone_map):
+    """Fetch call logs page by page, upsert each page immediately. Returns all rows."""
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{RC_SERVER}/restapi/v1.0/account/~/extension/~/call-log"
+    params = {"dateFrom": date_from, "perPage": 100, "view": "Simple"}
+    all_rows = []
+    page = 1
+    total_persisted = 0
+    while url:
+        resp = rc_get_with_retry(url, headers, params=params if page == 1 else None)
+        data = resp.json()
+        records = data.get("records", [])
+        rows = transform_call_page(records, phone_map)
+        if rows:
+            upsert_batch("rc_call_archive", rows)
+            total_persisted += len(rows)
+            log.info(f"Call page {page}: fetched {len(records)}, persisted {total_persisted} total")
+        all_rows.extend(rows)
+        nav = data.get("navigation", {})
+        next_page = nav.get("nextPage", {})
+        url = next_page.get("uri") if next_page else None
+        page += 1
+    return all_rows, total_persisted
+
 # -- Main pipeline ---------------------------------------------------------------
 
 def run(days):
@@ -167,54 +237,13 @@ def run(days):
     phone_map = load_candidate_map()
     log.info(f"Loaded {len(phone_map)} candidate phone mappings")
 
-    # Fetch SMS
-    sms_records = fetch_sms(token, date_from)
-    log.info(f"Fetched {len(sms_records)} SMS records from RC")
+    # Fetch + persist SMS (page by page)
+    sms_rows, sms_count = fetch_and_persist_sms(token, date_from, phone_map)
+    log.info(f"SMS complete: {sms_count} records persisted")
 
-    sms_rows = []
-    for msg in sms_records:
-        from_num = clean_phone(msg.get("from", {}).get("phoneNumber", ""))
-        to_list = msg.get("to", [])
-        to_num = clean_phone(to_list[0].get("phoneNumber", "")) if to_list else ""
-        direction = msg.get("direction", "").lower()
-        other_num = from_num if direction == "inbound" else to_num
-        sms_rows.append({
-            "message_id": msg["id"],
-            "from_number": from_num,
-            "to_number": to_num,
-            "body": msg.get("subject", ""),
-            "direction": direction,
-            "received_at": msg.get("creationTime"),
-            "read_status": msg.get("readStatus", ""),
-            "candidate_id": phone_map.get(other_num),
-        })
-
-    sms_count = upsert_batch("rc_sms_archive", sms_rows)
-    log.info(f"Upserted {sms_count} SMS to rc_sms_archive")
-
-    # Fetch calls
-    call_records = fetch_calls(token, date_from)
-    log.info(f"Fetched {len(call_records)} call records from RC")
-
-    call_rows = []
-    for call in call_records:
-        from_num = clean_phone(call.get("from", {}).get("phoneNumber", ""))
-        to_num = clean_phone(call.get("to", {}).get("phoneNumber", ""))
-        direction = call.get("direction", "").lower()
-        other_num = from_num if direction == "inbound" else to_num
-        call_rows.append({
-            "call_id": call["id"],
-            "from_number": from_num,
-            "to_number": to_num,
-            "direction": direction,
-            "duration_seconds": call.get("duration", 0),
-            "start_time": call.get("startTime"),
-            "result": call.get("result", ""),
-            "candidate_id": phone_map.get(other_num),
-        })
-
-    call_count = upsert_batch("rc_call_archive", call_rows)
-    log.info(f"Upserted {call_count} calls to rc_call_archive")
+    # Fetch + persist calls (page by page)
+    call_rows, call_count = fetch_and_persist_calls(token, date_from, phone_map)
+    log.info(f"Calls complete: {call_count} records persisted")
 
     # Build rc_contact_export
     contacts = defaultdict(lambda: {
