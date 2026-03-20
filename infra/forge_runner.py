@@ -102,6 +102,11 @@ WHITELIST = {
         "description": "Poll RC inbox every 30 min, match candidates, write to candidate_comms + sms_triage_queue",
         "allowed_args": ["--dry-run"],
     },
+    "rc_data_capture": {
+        "script": str(SCRIPTS_DIR / "scripts" / "rc_data_capture_cloud.py"),
+        "description": "Capture RC SMS + call history to Supabase archive tables and rebuild contact export",
+        "allowed_args": ["--days"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
