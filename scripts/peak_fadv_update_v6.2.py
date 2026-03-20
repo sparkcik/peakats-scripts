@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PEAKATS FADV Update Script v6.0
+PEAKATS FADV Update Script v6.2
 WRITES DIRECTLY TO SUPABASE (PostgreSQL Cloud)
 
 Updates candidate records with FADV background check data
@@ -8,6 +8,7 @@ Detects and flags ANY status changes for recruiter review
 NOW WITH FUZZY MATCHING for compound surnames and typos
 NOW WITH STATUS NORMALIZATION — raw FADV values mapped to clean taxonomy
 NOW WITH AUTO-REJECT — Ineligible BG or Failed Drug → status=Rejected, reject_reason=fadv_ineligible
+NOW WITH GCIC AUTO-MARK — Eligible BG → gcic_uploaded=1 (v6.2)
 
 Usage:
     peak-fadv --batch           # Process all clients
@@ -25,7 +26,7 @@ from difflib import SequenceMatcher
 SUPABASE_URL = "postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require"
 
 # FADV files location
-FADV_DIR = Path(os.path.expanduser('~')) / 'Google Drive/My Drive/CRUCIBLE OS/PEAK/04_FADV_UPDATES'
+FADV_DIR = Path.home() / "Library/CloudStorage/GoogleDrive-charles@thefoundry.llc/My Drive/CRUCIBLE OS/PEAK/PEAKATS/04_FADV_UPDATES"
 
 
 # ─── STATUS NORMALIZATION ──────────────────────────────────────────────────────
@@ -98,6 +99,29 @@ def apply_auto_reject(conn, candidate_id, bg_status, drug_status, text_func):
         reason = 'BG Ineligible' if bg_status == 'Ineligible' else 'Drug Fail'
         print(f"  🚫 AUTO-REJECTED: ID {candidate_id} — {reason}")
         return True
+    return False
+
+
+# ─── GCIC AUTO-MARK (v6.2) ─────────────────────────────────────────────────────
+
+def apply_gcic_auto_mark(conn, candidate_id, bg_status, text_func):
+    """
+    Auto-mark GCIC as uploaded when BG status becomes Eligible.
+    GCIC is a prerequisite for Eligible BG, so if they're Eligible, GCIC was received.
+    Only updates if gcic_uploaded is currently 0 or NULL.
+    """
+    if bg_status == 'Eligible':
+        result = conn.execute(text_func("""
+            UPDATE candidates
+            SET gcic_uploaded = 1,
+                updated_at = NOW()
+            WHERE id = :id
+            AND (gcic_uploaded = 0 OR gcic_uploaded IS NULL)
+        """), {"id": candidate_id})
+        conn.commit()
+        if result.rowcount > 0:
+            print(f"  📋 GCIC AUTO-MARKED: ID {candidate_id}")
+            return True
     return False
 
 
@@ -235,32 +259,95 @@ def normalize_client_name(name):
 
 def detect_file_type(csv_path):
     """
-    Auto-detect if CSV is Background or Drug file based on column headers
+    Auto-detect if CSV is Background or Drug file based on column headers,
+    falling back to filename patterns.
     Returns: 'background', 'drug', or None
     """
     try:
         df = pd.read_csv(csv_path, nrows=1)
         columns = [col.lower() for col in df.columns]
-        
-        if 'report type' in columns or 'drug screen' in ' '.join(columns).lower():
-            if 'report type' in columns:
-                return 'drug'
-        
-        if 'profile status' in columns and 'order status' in columns:
-            if 'report type' not in columns:
-                return 'background'
-        
+
+        # 1. 'report type' column is the strongest drug signal
+        if 'report type' in columns:
+            return 'drug'
+
+        # 2. Any column containing 'drug'
         if any('drug' in col for col in columns):
             return 'drug'
+
+        # 3. 'order status' without 'report type' → background
+        if 'order status' in columns:
+            return 'background'
+
+        # 4. Any column containing 'background' or 'profile status'
         if any('background' in col for col in columns):
             return 'background'
         if 'profile status' in columns:
             return 'background'
-            
-        return None
+
     except Exception as e:
-        print(f"Error detecting file type for {csv_path.name}: {e}")
-        return None
+        print(f"  ⚠️  Error reading headers for {csv_path.name}: {e}")
+
+    # 5. Filename fallback
+    fname = csv_path.name
+    if 'drug' in fname.lower():
+        return 'drug'
+    if 'search_results' in fname.lower() or 'background' in fname.lower():
+        return 'background'
+
+    return None
+
+
+# ─── CSV AUTO-MERGE (v6.1) ─────────────────────────────────────────────────────
+
+def merge_incoming_csvs(client_dir):
+    """
+    Auto-detect and merge paginated CSV files from FADV exports.
+    FADV now exports multi-page results as separate CSV files.
+    This function merges them by type (background vs drug) before processing.
+    """
+    all_csvs = list(client_dir.glob('*.csv'))
+    all_csvs = [f for f in all_csvs if 'archive' not in str(f).lower()]
+    
+    if len(all_csvs) <= 2:
+        return  # No merge needed
+    
+    bg_files = []
+    drug_files = []
+
+    for csv_file in all_csvs:
+        file_type = detect_file_type(csv_file)
+        print(f"  🔍 {csv_file.name} → {file_type or 'UNKNOWN'}")
+        if file_type == 'background':
+            bg_files.append(csv_file)
+        elif file_type == 'drug':
+            drug_files.append(csv_file)
+    
+    # Merge background files if multiple exist
+    if len(bg_files) > 1:
+        print(f"  📎 Merging {len(bg_files)} background CSV files...")
+        dfs = [pd.read_csv(f) for f in bg_files]
+        merged = pd.concat(dfs, ignore_index=True).drop_duplicates()
+        merged_path = client_dir / f"MERGED_background_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        merged.to_csv(merged_path, index=False)
+        print(f"  ✓ Created {merged_path.name} ({len(merged)} rows)")
+        # Delete originals
+        for f in bg_files:
+            f.unlink()
+            print(f"  🗑️ Deleted {f.name}")
+    
+    # Merge drug files if multiple exist
+    if len(drug_files) > 1:
+        print(f"  📎 Merging {len(drug_files)} drug CSV files...")
+        dfs = [pd.read_csv(f) for f in drug_files]
+        merged = pd.concat(dfs, ignore_index=True).drop_duplicates()
+        merged_path = client_dir / f"MERGED_drug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        merged.to_csv(merged_path, index=False)
+        print(f"  ✓ Created {merged_path.name} ({len(merged)} rows)")
+        # Delete originals
+        for f in drug_files:
+            f.unlink()
+            print(f"  🗑️ Deleted {f.name}")
 
 
 # ─── CHANGE DETECTION ─────────────────────────────────────────────────────────
@@ -310,6 +397,7 @@ def update_fadv_data(client_id=None, batch_mode=False):
         'changes_flagged': 0,
         'created': 0,
         'auto_rejected': 0,
+        'gcic_auto_marked': 0,
         'clients_processed': 0,
         'clients_skipped': 0
     }
@@ -330,6 +418,9 @@ def update_fadv_data(client_id=None, batch_mode=False):
         if not client_dir.exists():
             stats['clients_skipped'] += 1
             continue
+        
+        # Auto-merge paginated CSVs (v6.1)
+        merge_incoming_csvs(client_dir)
         
         all_csvs = sorted(client_dir.glob('*.csv'), key=lambda x: x.stat().st_mtime, reverse=True)
         all_csvs = [f for f in all_csvs if 'archive' not in str(f).lower()]
@@ -448,6 +539,7 @@ def update_fadv_data(client_id=None, batch_mode=False):
                     
                     new_values = {}
                     auto_rejected = False
+                    gcic_marked = False
                     
                     with engine.connect() as conn:
                         if file_type == 'background':
@@ -487,6 +579,14 @@ def update_fadv_data(client_id=None, batch_mode=False):
                                 old_values.get('drug_test_status', ''),
                                 text
                             )
+                            
+                            # GCIC auto-mark if Eligible (v6.2)
+                            if not auto_rejected:
+                                gcic_marked = apply_gcic_auto_mark(
+                                    conn, candidate_id,
+                                    bg_status_clean,
+                                    text
+                                )
                         
                         elif file_type == 'drug':
                             report_type = str(row.get('Report Type', '')).strip()
@@ -542,6 +642,9 @@ def update_fadv_data(client_id=None, batch_mode=False):
                     if auto_rejected:
                         stats['auto_rejected'] += 1
                     
+                    if gcic_marked:
+                        stats['gcic_auto_marked'] += 1
+                    
                     # Detect changes and flag
                     has_changes, change_details = detect_changes(old_values, new_values)
                     
@@ -558,7 +661,7 @@ def update_fadv_data(client_id=None, batch_mode=False):
                                 "id": candidate_id
                             })
                             conn.commit()
-                        
+
                         stats['changes_flagged'] += 1
                         flagged_candidates.append({
                             'name': f"{first_name} {last_name}",
@@ -568,7 +671,14 @@ def update_fadv_data(client_id=None, batch_mode=False):
                         })
                         flag_icon = '🚫' if auto_rejected else '🚩'
                         print(f"  {flag_icon} FLAGGED: {first_name} {last_name} - {change_details}")
-                    
+
+                        # Per-candidate log: show current BG + Drug status
+                        bg_display = new_values.get('background_status') or old_values.get('background_status') or '—'
+                        drug_display = new_values.get('drug_test_status') or old_values.get('drug_test_status') or '—'
+                        print(f"  ✓ [{first_name} {last_name}] — BG: {bg_display} / Drug: {drug_display}")
+                    else:
+                        print(f"  ⏭️  [{first_name} {last_name}] — no change")
+
                     stats['updates_applied'] += 1
                     
                     if file_type == 'background':
@@ -589,12 +699,12 @@ def update_fadv_data(client_id=None, batch_mode=False):
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            if bg_file:
+            if bg_file and bg_file.exists():
                 archive_name = f"{bg_file.stem}_{timestamp}{bg_file.suffix}"
                 bg_file.rename(archive_dir / archive_name)
                 print(f"  📁 Archived: {bg_file.name}")
-            
-            if drug_file:
+
+            if drug_file and drug_file.exists():
                 archive_name = f"{drug_file.stem}_{timestamp}{drug_file.suffix}"
                 drug_file.rename(archive_dir / archive_name)
                 print(f"  📁 Archived: {drug_file.name}")
@@ -612,6 +722,7 @@ def update_fadv_data(client_id=None, batch_mode=False):
     print(f"⏭️  Drug records skipped (not in DB): {stats.get('skipped', 0)}")
     print(f"🚩 Changes flagged:                 {stats['changes_flagged']}")
     print(f"🚫 Auto-rejected (FADV ineligible): {stats['auto_rejected']}")
+    print(f"📋 GCIC auto-marked (BG Eligible):  {stats['gcic_auto_marked']}")
     
     if flagged_candidates:
         print(f"\n{'='*60}")
@@ -667,11 +778,14 @@ if __name__ == "__main__":
     elif args.client:
         update_fadv_data(client_id=args.client)
     else:
-        print("PEAKATS FADV Update v6.0 - Direct to Cloud")
+        print("PEAKATS FADV Update v6.2 - Direct to Cloud")
         print("=" * 50)
         print("Usage:")
-        print("  Single client: python3 peak_fadv_update_v6.py --client star_one")
-        print("  All clients:   python3 peak_fadv_update_v6.py --batch")
+        print("  Single client: python3 peak_fadv_update_v6.2.py --client star_one")
+        print("  All clients:   python3 peak_fadv_update_v6.2.py --batch")
         print("")
         print("Or use alias:")
         print("  peak-fadv --batch")
+        print("")
+        print("v6.2 Changes:")
+        print("  - GCIC auto-mark when BG status = Eligible")
