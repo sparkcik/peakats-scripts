@@ -97,6 +97,11 @@ WHITELIST = {
         "description": "Read RC SMS inbox for 470-857-4325 — returns inbound messages with candidate matches",
         "allowed_args": ["--limit", "--unread-only", "--mark-read", "--format"],
     },
+    "rc_inbox_cron": {
+        "script": str(SCRIPTS_DIR / "rc_inbox_cron.py"),
+        "description": "Poll RC inbox every 30 min, match candidates, write to candidate_comms + sms_triage_queue",
+        "allowed_args": ["--dry-run"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
@@ -179,7 +184,7 @@ def health():
     return jsonify({
         "status": "running",
         "daemon": "forge-runner",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "timestamp": datetime.now().isoformat(),
     })
 
