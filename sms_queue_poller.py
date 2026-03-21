@@ -11,6 +11,7 @@ Usage:
 
 import os
 import sys
+import re
 import json
 import requests
 from datetime import datetime, timezone
@@ -187,6 +188,8 @@ def main():
                         body = bytes(body, 'utf-8').decode('unicode_escape')
                     except Exception:
                         pass
+            body = re.sub(r'(\S)(https?://)', r'\1 \2', body)  # space before URL if missing
+            body = re.sub(r'(https?://\S+)(\S)', r'\1 \2', body)  # space after URL if missing
             print(f'         Body repr: {repr(body[:200])}')
             twilio_sid = send_sms(to_number, body)
             mark_sent(msg_id, twilio_sid, candidate_id, template)
