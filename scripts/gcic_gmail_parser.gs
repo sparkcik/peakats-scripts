@@ -9,19 +9,21 @@
  * Trigger: set time-driven trigger -> every 30 minutes
  */
 
-// -- CONFIG (SUPABASE_URL, SUPABASE_KEY, LABEL_PENDING, LABEL_PROCESSED declared in Code.gs) --
-const FADV_EMAIL      = 'casedocuments@fadv.com';
-const CANDIDATE_DOCS_ROOT = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
+// -- CONFIG (SUPABASE_URL, SUPABASE_KEY declared in Code.gs) --
+const FADV_EMAIL           = 'casedocuments@fadv.com';
+const CANDIDATE_DOCS_ROOT  = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
+const GCIC_LABEL_PENDING   = 'GCIC/Pending';
+const GCIC_LABEL_PROCESSED = 'GCIC/Processed';
 
 // -- MAIN ENTRY POINT ---------------------------------------------------------
 function processGcicEmails() {
-  const pendingLabel = GmailApp.getUserLabelByName(LABEL_PENDING);
+  const pendingLabel = GmailApp.getUserLabelByName(GCIC_LABEL_PENDING);
   if (!pendingLabel) {
-    Logger.log('Label not found: ' + LABEL_PENDING + ' -- create it in Gmail first');
+    Logger.log('Label not found: ' + GCIC_LABEL_PENDING + ' -- create it in Gmail first');
     return;
   }
 
-  const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+  const processedLabel = getOrCreateLabel_(GCIC_LABEL_PROCESSED);
   const threads = pendingLabel.getThreads(0, 50);
 
   Logger.log('Found ' + threads.length + ' GCIC threads to process');
@@ -331,8 +333,8 @@ function processSpecificThreads() {
     '19cf3553f7187f54'   // Jakireya Norman
   ];
 
-  const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
-  const pendingLabel = GmailApp.getUserLabelByName(LABEL_PENDING);
+  const processedLabel = getOrCreateLabel_(GCIC_LABEL_PROCESSED);
+  const pendingLabel = GmailApp.getUserLabelByName(GCIC_LABEL_PENDING);
 
   var adobeOk = 0, skipped = 0, errors = 0;
 
@@ -389,7 +391,7 @@ function processSpecificThreads() {
 // -- ONE-TIME BACKLOG LABELER -------------------------------------------------
 // Run ONCE manually to catch existing Adobe Sign + FADV SR emails
 function labelGcicBacklog() {
-  const pendingLabel = getOrCreateLabel_(LABEL_PENDING);
+  const pendingLabel = getOrCreateLabel_(GCIC_LABEL_PENDING);
 
   // Adobe Sign signed-and-filed emails
   const adobeThreads = GmailApp.search(
