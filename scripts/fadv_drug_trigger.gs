@@ -114,6 +114,23 @@ function processNewDrugScreenEmails() {
   Logger.log('[Drug Trigger] Done. Processed ' + threads.length + ' thread(s).');
 }
 
+// -- EXTRACT BARCODE ---------------------------------------------------------
+function extractBarcode_(body) {
+  // 1. Quest QPassport format
+  var quest = body.match(/Quest QPassport\/Barcode #:\s*(\S+)/i);
+  if (quest) return quest[1].trim();
+
+  // 2. FormFox/Concentra format
+  var formfox = body.match(/FormFox Web COC Order Registration Number:\s*(\S+)/i);
+  if (formfox) return formfox[1].trim();
+
+  // 3. Fallback -- Authorization # (number on next line)
+  var auth = body.match(/Authorization #\s*[\r\n]+\s*(\d+)/i);
+  if (auth) return auth[1].trim();
+
+  return 'N/A';
+}
+
 // -- PROCESS SINGLE EMAIL ----------------------------------------------------
 function processOneEmail_(body, subject) {
   // Extract candidate name
@@ -124,9 +141,8 @@ function processOneEmail_(body, subject) {
   }
   var fullName = nameMatch[1].trim();
 
-  // Extract barcode
-  var barcodeMatch = body.match(/Quest QPassport\/Barcode #:\s*(\S+)/i);
-  var barcode = barcodeMatch ? barcodeMatch[1].trim() : 'N/A';
+  // Extract barcode (try multiple formats)
+  var barcode = extractBarcode_(body);
 
   // Extract account/client hint
   var accountMatch = body.match(/Account:\s*(?:FXG|FEC)\s+VENDOR\s+(\S+)\s*\(/i);
