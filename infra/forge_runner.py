@@ -118,6 +118,11 @@ WHITELIST = {
         "description": "Blast Template 39 to unsent rc_contact_export numbers via Twilio",
         "allowed_args": ["--dry-run", "--limit"],
     },
+    "gcic_outreach": {
+        "script": str(SCRIPTS_DIR / "scripts" / "gcic_outreach_trigger.py"),
+        "description": "GCIC outreach — queue Template 2 SMS for candidates with BG In Progress and no GCIC sent",
+        "allowed_args": ["--dry-run"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
