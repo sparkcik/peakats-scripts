@@ -81,7 +81,7 @@ function handleAdobeSign_(message) {
   const subject = message.getSubject();
 
   // Extract candidate name: "GCIC [Form] Acrobat eSig - SIGN ASAP between Kai M Clarke and {NAME} is Signed and Filed!"
-  const nameMatch = subject.match(/and\s+(.+?)\s+is Signed and Filed/i);
+  const nameMatch = subject.match(/\(?\s*between\s+Kai\s+M\s+Clarke\s+and\s+(.+?)\s+is Signed/i);
   if (!nameMatch) {
     Logger.log('Could not parse name from Adobe Sign subject: ' + subject);
     return false;
