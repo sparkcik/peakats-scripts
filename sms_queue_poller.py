@@ -170,6 +170,8 @@ def main():
             continue
 
         try:
+            body = body.replace('\\n', '\n') if body else body
+            print(f'         Body repr: {repr(body[:120])}')
             twilio_sid = send_sms(to_number, body)
             mark_sent(msg_id, twilio_sid, candidate_id, template)
             update_comms_log(candidate_id, twilio_sid, body)
