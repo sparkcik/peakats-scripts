@@ -39,8 +39,16 @@ function processGcicEmails() {
     messages.forEach(function(message) {
       try {
         const from = message.getFrom();
+        const subj = message.getSubject();
 
+        // Skip non-actionable Adobe Sign emails
         if (from.indexOf('adobesign@adobesign.com') !== -1) {
+          if (subj.indexOf('has been sent out for signature') !== -1 ||
+              (subj.indexOf('web form') !== -1 && subj.indexOf('has been created') !== -1) ||
+              subj.indexOf('You signed:') !== -1) {
+            skipped++;
+            return;
+          }
           if (handleAdobeSign_(message)) adobeOk++;
           else skipped++;
         } else if (from.indexOf('support-donotreply@fadv.com') !== -1) {
@@ -72,7 +80,7 @@ function processGcicEmails() {
 function handleAdobeSign_(message) {
   const subject = message.getSubject();
 
-  // Extract candidate name: "...between Kai M Clarke and {FIRST LAST} is Signed and Filed!"
+  // Extract candidate name: "GCIC [Form] Acrobat eSig - SIGN ASAP between Kai M Clarke and {NAME} is Signed and Filed!"
   const nameMatch = subject.match(/and\s+(.+?)\s+is Signed and Filed/i);
   if (!nameMatch) {
     Logger.log('Could not parse name from Adobe Sign subject: ' + subject);

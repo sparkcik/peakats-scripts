@@ -68,15 +68,23 @@ function processFadvEmails() {
       }
     });
 
-    // Move thread: remove FADV/Pending, add FADV/Processed, mark read, archive
+    // Move thread: remove FADV/Pending, add FADV/Processed, strip Kai/Inbox, mark read, archive
     thread.removeLabel(pendingLabel);
     thread.addLabel(processedLabel);
+    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+    if (kaiInbox) thread.removeLabel(kaiInbox);
     thread.markRead();
     thread.moveToArchive();
   });
 
   Logger.log('Run complete — Updated: ' + updated + ' | Skipped: ' + skipped +
              ' | Unmatched: ' + unmatched + ' | Errors: ' + errors);
+}
+
+// ── HOURLY TRIGGER WRAPPER ───────────────────────────────────────────────────
+function runHourly() {
+  processFadvEmails();
+  processFadvActionEmails();
 }
 
 // ── PARSE + UPDATE ONE MESSAGE ───────────────────────────────────────────────
@@ -576,6 +584,8 @@ function labelBacklog() {
   Logger.log('Backlog threads to label: ' + threads.length);
   threads.forEach(function(thread) {
     thread.addLabel(processedLabel);
+    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+    if (kaiInbox) thread.removeLabel(kaiInbox);
     thread.markRead();
     thread.moveToArchive();
   });
