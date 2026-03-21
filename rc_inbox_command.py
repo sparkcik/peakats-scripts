@@ -132,6 +132,42 @@ def main():
         if args.mark_read and read_status == 'Unread':
             mark_read(token, msg_id)
 
+    # ── Direct Supabase upsert to rc_sms_archive ────────────────────────────
+    upsert_headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+    }
+    rows = []
+    for m in results:
+        raw_from = str(m.get('from', '') or '').strip()
+        digits = ''.join(c for c in raw_from if c.isdigit())
+        if len(digits) == 11 and digits.startswith('1'):
+            digits = digits[1:]
+        rows.append({
+            'message_id': m['message_id'],
+            'from_number': digits or raw_from,
+            'body': m.get('body', ''),
+            'received_at': m.get('received_at'),
+            'read_status': m.get('read_status'),
+            'direction': 'inbound',
+        })
+
+    upserted = 0
+    for i in range(0, len(rows), 100):
+        chunk = rows[i:i+100]
+        r = requests.post(
+            f'{SUPABASE_URL}/rest/v1/rc_sms_archive',
+            headers=upsert_headers,
+            json=chunk,
+        )
+        if r.status_code in (200, 201):
+            upserted += len(chunk)
+        else:
+            print(f'[ARCHIVE] Batch {i//100+1} error {r.status_code}: {r.text[:200]}', file=sys.stderr)
+    print(f'[ARCHIVE] Upserted {upserted} messages to rc_sms_archive', file=sys.stderr)
+
     output = {
         'source':      'rc_inbox',
         'kai_number':  '4708574325',
