@@ -308,6 +308,70 @@ function getOrCreateLabel_(labelName) {
   return label;
 }
 
+// -- PROCESS SPECIFIC THREADS (one-time manual run) ---------------------------
+function processSpecificThreads() {
+  const threadIds = [
+    '19d07946cf7cd597',  // Derek Taplet
+    '19d07656f54a9bb5',  // Kai M Clarke (test - skip)
+    '19cfce83984ab366',  // Wayne Rucker
+    '19cfb6894864d8b4',  // Marvin Bagwell
+    '19cf360dd155a5e2',  // Michael Cobb
+    '19cf3553f7187f54'   // Jakireya Norman
+  ];
+
+  const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+  const pendingLabel = GmailApp.getUserLabelByName(LABEL_PENDING);
+
+  var adobeOk = 0, skipped = 0, errors = 0;
+
+  threadIds.forEach(function(threadId) {
+    try {
+      var thread = GmailApp.getThreadById(threadId);
+      if (!thread) { Logger.log('Thread not found: ' + threadId); return; }
+
+      var messages = thread.getMessages();
+
+      messages.forEach(function(message) {
+        Logger.log('Processing: [' + message.getFrom() + '] ' + message.getSubject());
+        var from = message.getFrom();
+        var subj = message.getSubject();
+
+        // Skip "Kai M Clarke and Kai M Clarke" (test document)
+        if (subj.indexOf('Kai M  Clarke and Kai M  Clarke') !== -1 ||
+            subj.indexOf('Kai M Clarke and Kai M Clarke') !== -1) {
+          Logger.log('Skipping test document: ' + subj);
+          skipped++;
+          return;
+        }
+
+        if (from.indexOf('adobesign@adobesign.com') !== -1 &&
+            subj.indexOf('is Signed and Filed') !== -1) {
+          if (handleAdobeSign_(message)) adobeOk++;
+          else { Logger.log('handleAdobeSign_ returned false'); skipped++; }
+        } else {
+          skipped++;
+        }
+      });
+
+      // Move thread regardless
+      if (pendingLabel) thread.removeLabel(pendingLabel);
+      thread.addLabel(processedLabel);
+      var kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+      if (kaiInbox) thread.removeLabel(kaiInbox);
+      var peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+      if (peakInbox) thread.removeLabel(peakInbox);
+      thread.markRead();
+      thread.moveToArchive();
+
+    } catch(e) {
+      Logger.log('ERROR on thread ' + threadId + ': ' + e.message);
+      errors++;
+    }
+  });
+
+  Logger.log('Specific threads complete -- Adobe: ' + adobeOk + ' | Skipped: ' + skipped + ' | Errors: ' + errors);
+}
+
 // -- ONE-TIME BACKLOG LABELER -------------------------------------------------
 // Run ONCE manually to catch existing Adobe Sign + FADV SR emails
 function labelGcicBacklog() {
