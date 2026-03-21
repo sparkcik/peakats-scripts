@@ -34,6 +34,7 @@ function processGcicEmails() {
 
     messages.forEach(function(message) {
       try {
+        Logger.log('MSG from: [' + message.getFrom() + '] subject: [' + message.getSubject() + ']');
         const from = message.getFrom();
         const subj = message.getSubject();
 
@@ -63,6 +64,10 @@ function processGcicEmails() {
     if (threadOk) {
       thread.removeLabel(pendingLabel);
       thread.addLabel(processedLabel);
+      const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+      if (kaiInbox) thread.removeLabel(kaiInbox);
+      const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+      if (peakInbox) thread.removeLabel(peakInbox);
       thread.markRead();
       thread.moveToArchive();
     }

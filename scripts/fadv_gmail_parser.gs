@@ -71,8 +71,10 @@ function processFadvEmails() {
     // Move thread: remove FADV/Pending, add FADV/Processed, strip PEAK/Inbox, mark read, archive
     thread.removeLabel(pendingLabel);
     thread.addLabel(processedLabel);
-    const kaiInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
     if (kaiInbox) thread.removeLabel(kaiInbox);
+    const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+    if (peakInbox) thread.removeLabel(peakInbox);
     thread.markRead();
     thread.moveToArchive();
   });
@@ -442,6 +444,10 @@ function processFadvActionEmails() {
     if (threadOk) {
       thread.removeLabel(actionLabel);
       thread.addLabel(processedLabel);
+      const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+      if (kaiInbox) thread.removeLabel(kaiInbox);
+      const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+      if (peakInbox) thread.removeLabel(peakInbox);
       thread.markRead();
       thread.moveToArchive();
     }
@@ -584,8 +590,10 @@ function labelBacklog() {
   Logger.log('Backlog threads to label: ' + threads.length);
   threads.forEach(function(thread) {
     thread.addLabel(processedLabel);
-    const kaiInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
     if (kaiInbox) thread.removeLabel(kaiInbox);
+    const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
+    if (peakInbox) thread.removeLabel(peakInbox);
     thread.markRead();
     thread.moveToArchive();
   });
