@@ -123,6 +123,11 @@ WHITELIST = {
         "description": "GCIC outreach — queue Template 2 SMS for candidates with BG In Progress and no GCIC sent",
         "allowed_args": ["--dry-run"],
     },
+    "mec_outreach": {
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_outreach_trigger.py"),
+        "description": "MEC outreach — queue Template 15/46/37 SMS based on drug/BG status for MEC/DL collection",
+        "allowed_args": ["--dry-run", "--client", "--limit"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
