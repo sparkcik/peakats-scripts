@@ -129,13 +129,17 @@ def update_comms_log(candidate_id, rc_message_id, body):
 def send_sms(to_number, body):
     """Send SMS via Twilio REST API. Returns Twilio message SID."""
     clean = to_number.replace('+1','').replace('-','').replace('(','').replace(')','').replace(' ','')
+    try:
+        send_body = body.encode('utf-8').decode('unicode_escape')
+    except Exception:
+        send_body = body
     resp = requests.post(
         f'https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json',
         auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
         data={
             'From': TWILIO_FROM_NUMBER,
             'To': f'+1{clean}',
-            'Body': body
+            'Body': send_body
         }
     )
     resp.raise_for_status()
@@ -159,6 +163,8 @@ def main():
         msg_id       = msg['id']
         to_number    = msg['to_number']
         body         = msg['body']
+        # Debug: show exact bytes
+        print(f'RAW body bytes: {body.encode()[:100]}')
         candidate_id = msg.get('candidate_id')
         template     = msg.get('template_name', 'manual')
 
