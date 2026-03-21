@@ -18,8 +18,10 @@ import sys
 import argparse
 import requests
 from datetime import datetime, timezone
+from sqlalchemy import create_engine, text
 
 # -- Config -------------------------------------------------------------------
+DB_URL = os.environ.get('DB_URL', 'postgresql://postgres.eyopvsmsvbgfuffscfom:peakats2026@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require')
 SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4')
 FROM_NUMBER = '+14704704766'
@@ -138,28 +140,30 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
     if limit:
         print(f'[MEC Outreach] Limit: {limit}')
 
-    # Query candidates needing MEC outreach (tighter filter)
-    # WHERE (drug=Pass AND bg IN (Eligible,In Progress,Consider,Needs Further Review))
-    #    OR (drug=In Progress AND bg IN (In Progress,Consider))
-    params = {
-        'select': 'id,first_name,last_name,client_id,phone,drug_test_status,background_status',
-        'or': '('
-              'and(drug_test_status.eq.Pass,background_status.in.(Eligible,In Progress,Consider,Needs Further Review)),'
-              'and(drug_test_status.eq.In Progress,background_status.in.(In Progress,Consider))'
-              ')',
-        'mec_dl_outreach_sent_at': 'is.null',
-        'mec_dl_collection_stage': 'not.in.(RECEIVED,SUBMITTED)',
-        'status': 'not.in.(Rejected,Hired,Transferred)',
-        'phone': 'neq.0000000000',
-        'order': 'id.asc'
-    }
+    # Query candidates needing MEC outreach via direct SQL
+    sql = """
+        SELECT id, first_name, last_name, client_id, phone, drug_test_status, background_status
+        FROM candidates
+        WHERE (
+            (drug_test_status = 'Pass' AND background_status IN ('Eligible','In Progress','Consider','Needs Further Review'))
+            OR
+            (drug_test_status = 'In Progress' AND background_status IN ('In Progress','Consider'))
+        )
+        AND mec_dl_outreach_sent_at IS NULL
+        AND (mec_dl_collection_stage IS NULL OR mec_dl_collection_stage NOT IN ('RECEIVED','SUBMITTED'))
+        AND status NOT IN ('Rejected','Hired','Transferred')
+        AND phone IS NOT NULL AND phone != '0000000000'
+    """
     if client_filter:
-        params['client_id'] = f'eq.{client_filter}'
+        sql += f" AND client_id = '{client_filter}'"
+    sql += " ORDER BY id ASC"
+    if limit:
+        sql += f" LIMIT {limit}"
 
-    candidates = sb_get('candidates', params)
-
-    # Filter out null/empty phones client-side (belt-and-suspenders)
-    candidates = [c for c in candidates if c.get('phone') and c['phone'] != '0000000000']
+    engine = create_engine(DB_URL)
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql)).fetchall()
+    candidates = [dict(r._mapping) for r in rows]
 
     print(f'[MEC Outreach] {len(candidates)} candidate(s) eligible.')
 
