@@ -87,7 +87,7 @@ function handleAdobeSign_(message) {
     Logger.log('Could not parse name from Adobe Sign subject: ' + subject);
     return false;
   }
-  const fullName = nameMatch[1].trim();
+  const fullName = nameMatch[1].trim().replace(/\)$/, '').trim();
 
   // Find candidate by name
   const candidate = findCandidateByName_(fullName);
