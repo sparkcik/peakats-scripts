@@ -365,15 +365,17 @@ function processSpecificThreads() {
         }
       });
 
-      // Move thread regardless
-      if (pendingLabel) thread.removeLabel(pendingLabel);
-      thread.addLabel(processedLabel);
+      // Force remove GCIC/Pending by name lookup
+      var gcicPending = GmailApp.getUserLabelByName('GCIC/Pending');
+      var gcicProcessed = getOrCreateLabel_('GCIC/Processed');
+      if (gcicPending) {
+        try { thread.removeLabel(gcicPending); } catch(e) { Logger.log('removeLabel error: ' + e.message); }
+      }
+      try { thread.addLabel(gcicProcessed); } catch(e) { Logger.log('addLabel error: ' + e.message); }
       var kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
-      if (kaiInbox) thread.removeLabel(kaiInbox);
-      var peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
-      if (peakInbox) thread.removeLabel(peakInbox);
+      if (kaiInbox) { try { thread.removeLabel(kaiInbox); } catch(e) {} }
       thread.markRead();
-      thread.moveToArchive();
+      Logger.log('Labels updated for thread: ' + threadId);
 
     } catch(e) {
       Logger.log('ERROR on thread ' + threadId + ': ' + e.message);
