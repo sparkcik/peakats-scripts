@@ -138,10 +138,15 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
     if limit:
         print(f'[MEC Outreach] Limit: {limit}')
 
-    # Query candidates needing MEC outreach
+    # Query candidates needing MEC outreach (tighter filter)
+    # WHERE (drug=Pass AND bg IN (Eligible,In Progress,Consider,Needs Further Review))
+    #    OR (drug=In Progress AND bg IN (In Progress,Consider))
     params = {
         'select': 'id,first_name,last_name,client_id,phone,drug_test_status,background_status',
-        'or': '(drug_test_status.eq.Pass,drug_test_status.eq.In Progress)',
+        'or': '('
+              'and(drug_test_status.eq.Pass,background_status.in.(Eligible,In Progress,Consider,Needs Further Review)),'
+              'and(drug_test_status.eq.In Progress,background_status.in.(In Progress,Consider))'
+              ')',
         'mec_dl_outreach_sent_at': 'is.null',
         'mec_dl_collection_stage': 'not.in.(RECEIVED,SUBMITTED)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
@@ -153,7 +158,7 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
 
     candidates = sb_get('candidates', params)
 
-    # Filter out null/empty phones and null mec_dl_collection_stage edge cases
+    # Filter out null/empty phones client-side (belt-and-suspenders)
     candidates = [c for c in candidates if c.get('phone') and c['phone'] != '0000000000']
 
     print(f'[MEC Outreach] {len(candidates)} candidate(s) eligible.')
