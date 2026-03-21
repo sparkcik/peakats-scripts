@@ -170,8 +170,18 @@ def main():
             continue
 
         try:
-            body = body.replace('\\n', '\n') if body else body
-            print(f'         Body repr: {repr(body[:120])}')
+            # Normalize line breaks -- DB stores literal \n as escape sequence
+            if body:
+                body = body.replace('\\n', '\n')
+                body = body.replace('\\r\\n', '\n')
+                body = body.replace('\\r', '\n')
+                # If still no real newlines, try unicode_escape decode
+                if '\\n' in body:
+                    try:
+                        body = bytes(body, 'utf-8').decode('unicode_escape')
+                    except Exception:
+                        pass
+            print(f'         Body repr: {repr(body[:200])}')
             twilio_sid = send_sms(to_number, body)
             mark_sent(msg_id, twilio_sid, candidate_id, template)
             update_comms_log(candidate_id, twilio_sid, body)
