@@ -96,6 +96,12 @@ function handleAdobeSign_(message) {
     return false;
   }
 
+  // IDEMPOTENCY GUARD -- never re-send to FADV if already sent
+  if (candidate.gcic_email_sent === 1) {
+    Logger.log('Already sent to FADV, skipping: ' + fullName);
+    return false;
+  }
+
   // 1. Mark form completed
   supabasePatch_('candidates', 'id=eq.' + candidate.id, {
     gcic_form_completed: 1,
@@ -171,6 +177,12 @@ function handleFadvSr_(message) {
   }
   if (!candidate) {
     Logger.log('No candidate match for FADV SR: ' + fullName + ' / Order ID: ' + orderId);
+    return false;
+  }
+
+  // IDEMPOTENCY GUARD -- skip if SR# already recorded
+  if (candidate.gcic_sr_number === srNumber) {
+    Logger.log('SR# already recorded, skipping: ' + fullName + ' SR#: ' + srNumber);
     return false;
   }
 
