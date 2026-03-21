@@ -13,7 +13,7 @@
 var SUPABASE_URL = 'https://eyopvsmsvbgfuffscfom.supabase.co';
 var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
 var FADV_EMAIL = 'casedocuments@fadv.com';
-var GCIC_PROCESSED_LABEL = 'GCIC/Processed';
+var GCIC_PROCESSED_LABEL = 'AdobeSign/GCIC-Processed';
 var GCIC_DOCS_ROOT = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
 var FROM_NUMBER = '+14704704766';
 
@@ -72,7 +72,7 @@ function getOrCreateLabel_(name) {
 
 // -- MAIN ENTRY POINT --------------------------------------------------------
 function processSignedGCICEmails() {
-  var query = 'from:adobesign@adobesign.com subject:"Signed and Filed" -label:GCIC/Processed';
+  var query = 'from:adobesign@adobesign.com subject:"GCIC" -label:AdobeSign/GCIC-Processed';
   var threads = GmailApp.search(query, 0, 50);
 
   if (threads.length === 0) {
