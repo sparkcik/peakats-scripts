@@ -116,30 +116,39 @@ function processNewDrugScreenEmails() {
 
 // -- EXTRACT BARCODE ---------------------------------------------------------
 function extractBarcode_(body) {
-  // 1. Quest QPassport format
-  var quest = body.match(/Quest QPassport\/Barcode #:\s*(\S+)/i);
-  if (quest) return quest[1].trim();
+  // Authorization # appears in ALL FADV drug screen emails -- primary pattern
+  var authMatch = body.match(/Authorization\s*#\s*[\r\n\s]*(\d+)/i);
+  if (authMatch) return authMatch[1].trim();
 
-  // 2. FormFox/Concentra format
-  var formfox = body.match(/FormFox Web COC Order Registration Number:\s*(\S+)/i);
-  if (formfox) return formfox[1].trim();
+  // FormFox fallback (same number, belt-and-suspenders)
+  var foxMatch = body.match(/FormFox Web COC Order Registration Number:\s*(\d+)/i);
+  if (foxMatch) return foxMatch[1].trim();
 
-  // 3. Fallback -- Authorization # (number on next line)
-  var auth = body.match(/Authorization #\s*[\r\n]+\s*(\d+)/i);
-  if (auth) return auth[1].trim();
+  // Quest QPassport fallback (legacy format, rare)
+  var questMatch = body.match(/Quest QPassport\/Barcode #:\s*(\S+)/i);
+  if (questMatch) return questMatch[1].trim();
 
   return 'N/A';
+}
+
+// -- EXTRACT CANDIDATE NAME --------------------------------------------------
+function extractCandidateName_(body) {
+  // Primary: Applicant Name: line (always present)
+  var nameMatch = body.match(/Applicant Name:\s*([A-Z\s\-'\.]+?)(?:\r|\n)/i);
+  if (nameMatch) return nameMatch[1].trim();
+
+  // Fallback: extract from subject line passed as parameter
+  return null;
 }
 
 // -- PROCESS SINGLE EMAIL ----------------------------------------------------
 function processOneEmail_(body, subject) {
   // Extract candidate name
-  var nameMatch = body.match(/Applicant Name:\s*(.+)/i);
-  if (!nameMatch) {
+  var fullName = extractCandidateName_(body);
+  if (!fullName) {
     Logger.log('[Drug Trigger] No applicant name found in email.');
     return;
   }
-  var fullName = nameMatch[1].trim();
 
   // Extract barcode (try multiple formats)
   var barcode = extractBarcode_(body);
