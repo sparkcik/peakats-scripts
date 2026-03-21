@@ -179,7 +179,7 @@ function processOneEmail_(body, subject) {
 
 // -- MATCH CANDIDATE ---------------------------------------------------------
 function matchCandidate(firstName, lastName) {
-  // Try exact first + last name match (case-insensitive), exclude terminal statuses
+  // Exact first + last match only -- no first-name-only fallback (too loose, causes false positives)
   var results = sbGet_('candidates', {
     'select': 'id,phone,first_name,last_name,client_id',
     'first_name': 'ilike.' + firstName,
@@ -193,25 +193,11 @@ function matchCandidate(firstName, lastName) {
   }
 
   if (results && results.length > 1) {
-    // Multiple matches -- return first, log warning
-    Logger.log('[Drug Trigger] Multiple matches (' + results.length + ') for ' + firstName + ' ' + lastName + ' -- using first.');
+    Logger.log('[Drug Trigger] WARNING: Multiple matches for ' + firstName + ' ' + lastName + ' -- using first result');
     return results[0];
   }
 
-  // Fallback: first name only
-  var fallback = sbGet_('candidates', {
-    'select': 'id,phone,first_name,last_name,client_id',
-    'first_name': 'ilike.' + firstName,
-    'status': 'not.in.(Rejected,Hired,Transferred)',
-    'limit': '1'
-  });
-
-  if (fallback && fallback.length === 1) {
-    Logger.log('[Drug Trigger] Fuzzy match (first name only): ' + fallback[0].first_name + ' ' + fallback[0].last_name);
-    return fallback[0];
-  }
-
-  return null;
+  return null; // No match -- caller will logUnmatched
 }
 
 // -- UPDATE DRUG STATUS ------------------------------------------------------
@@ -259,7 +245,7 @@ function logUnmatched(fullName, barcode, subject) {
     'category': 'ops_note',
     'subject': 'FADV Drug Screen -- Unmatched: ' + fullName,
     'content': 'Drug screen email received but no candidate match found. '
-      + 'Barcode: ' + barcode + '. '
+      + 'Barcode: ' + barcode + (barcode === 'N/A' ? ' (extraction failed -- check original email for real barcode). ' : '. ')
       + 'Email subject: ' + subject + '. '
       + 'Manual match required in PEAKATS.',
     'target_thread': 'PEAK Ops',
