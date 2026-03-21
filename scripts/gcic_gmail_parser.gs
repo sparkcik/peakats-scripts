@@ -9,11 +9,7 @@
  * Trigger: set time-driven trigger -> every 30 minutes
  */
 
-// -- CONFIG -------------------------------------------------------------------
-const SUPABASE_URL = 'https://eyopvsmsvbgfuffscfom.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
-const LABEL_PENDING   = 'GCIC/Pending';
-const LABEL_PROCESSED = 'GCIC/Processed';
+// -- CONFIG (SUPABASE_URL, SUPABASE_KEY, LABEL_PENDING, LABEL_PROCESSED declared in Code.gs) --
 const FADV_EMAIL      = 'casedocuments@fadv.com';
 const CANDIDATE_DOCS_ROOT = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
 
