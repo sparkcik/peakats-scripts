@@ -90,6 +90,12 @@ function processSignedGCICEmails() {
       var msg = messages[m];
       var subject = msg.getSubject();
 
+      // Skip non-GCIC emails
+      if (subject.toLowerCase().indexOf('gcic') === -1) {
+        Logger.log('[GCIC Trigger] Skipping non-GCIC email: ' + subject);
+        continue;
+      }
+
       // Skip test emails (Kai signing with himself)
       if (subject.indexOf('Kai M Clarke and Kai M Clarke') !== -1) {
         Logger.log('[GCIC Trigger] Skipping test email: ' + subject);
