@@ -43,12 +43,12 @@ AUTH_KEY = os.environ.get("FORGE_RUNNER_KEY", "forge-local-2026")
 
 WHITELIST = {
     "fadv_update": {
-        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.2.py"),
         "description": "FADV reconciliation — sync BG/drug status from CSV exports to Supabase",
         "allowed_args": ["--batch", "--client"],
     },
     "fadv_update_batch": {
-        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.2.py"),
         "description": "FADV reconciliation — all clients batch mode",
         "fixed_args": ["--batch"],
         "allowed_args": [],
