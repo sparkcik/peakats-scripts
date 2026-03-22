@@ -140,7 +140,7 @@ def send_sms(to_number, body):
             'From': TWILIO_FROM_NUMBER,
             'To': f'+1{clean}',
             'Body': send_body,
-            'MediaUrl': 'https://via.placeholder.com/1x1.png'
+            'MediaUrl': 'https://httpbin.org/image/png'
         }
     )
     resp.raise_for_status()
