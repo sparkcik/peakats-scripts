@@ -16,14 +16,19 @@ const DRUG_ORDERS_LABEL = 'FADV/Drug-Orders';
 const PROCESSED_LABEL   = 'FADV/Processed';
 const TEMPLATE_ID       = 47;
 const TEMPLATE_NAME     = 'Drug Screen Ordered -- Immediate Outreach';
-const FROM_NUMBER       = '+14704704766';
+const FROM_NUMBER       = '+14708574325';
 
 // Template 47 body -- [FIRST] and [BARCODE] replaced at send time
-const TEMPLATE_BODY = 'Hi [FIRST], this is Kai from PEAK Recruiting. '
-  + 'Your drug screen has been ordered. Please visit any Quest Diagnostics location '
-  + 'within 24 hours. Your barcode is: [BARCODE]. '
-  + 'Show this barcode at the front desk -- no appointment needed. '
-  + 'Reply DONE when complete or call us with any questions.';
+const TEMPLATE_BODY = '[FIRST], your drug screen has been ordered. '
+  + 'Check your email from First Advantage -- it has your clinic locations nearby.\n\n'
+  + 'Your barcode: [BARCODE]\n\n'
+  + 'I need you to go within the next 24 hours. Your position depends on it '
+  + 'and I want to keep it held for you.\n\n'
+  + 'Reply here to confirm you are going today, or let me know if you need '
+  + 'a little more time -- I will do my best to work with you.\n\n'
+  + 'Kai\n'
+  + 'PEAKrecruiting\n'
+  + 'Questions? (470) 857-4325';
 
 // -- SUPABASE HELPERS --------------------------------------------------------
 const SB_HEADERS = {
