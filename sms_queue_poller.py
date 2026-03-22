@@ -127,7 +127,7 @@ def update_comms_log(candidate_id, rc_message_id, body):
 
 # ── Twilio Send ──────────────────────────────────────────────────────────────
 def send_sms(to_number, body):
-    """Send MMS via Twilio REST API. Returns Twilio message SID."""
+    """Send SMS via Twilio REST API. Returns Twilio message SID."""
     clean = to_number.replace('+1','').replace('-','').replace('(','').replace(')','').replace(' ','')
     try:
         send_body = body.encode('utf-8').decode('unicode_escape')
@@ -139,13 +139,12 @@ def send_sms(to_number, body):
         data={
             'From': TWILIO_FROM_NUMBER,
             'To': f'+1{clean}',
-            'Body': send_body,
-            'MediaUrl': 'https://httpbin.org/image/png'
+            'Body': send_body
         }
     )
     resp.raise_for_status()
     sid = resp.json().get('sid', 'unknown')
-    print(f'         [MMS] SID: {sid}')
+    print(f'         [SMS] SID: {sid}')
     return sid
 
 # ── Main ──────────────────────────────────────────────────────────────────────

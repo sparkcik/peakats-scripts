@@ -415,36 +415,31 @@ def twilio_voice_recording():
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
 
 
-# ── Scheduler — SMS Queue Poller (daily 11:30 UTC / 7:30 AM ET) ───────────────
+# ── Scheduler — SMS Queue Poller (every 15 minutes) ───────────────────────────
 
 def _sms_scheduler():
-    """Background thread: fires sms_queue_poller.py once daily at 11:30 UTC."""
-    last_run_date = None
+    """Background thread: fires sms_queue_poller.py every 15 minutes."""
     script = str(SCRIPTS_DIR / "sms_queue_poller.py")
     while True:
         try:
-            now = datetime.now(timezone.utc)
-            today = now.date()
-            if now.hour == 11 and now.minute == 30 and last_run_date != today:
-                last_run_date = today
-                log.info("[scheduler] Triggering sms_queue_poller.py (11:30 UTC)")
-                result = subprocess.run(
-                    ["python3", script],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    cwd=str(SCRIPTS_DIR),
-                )
-                log.info(f"[scheduler] sms_queue_poller exit={result.returncode}")
-                if result.stdout:
-                    for line in result.stdout.strip().splitlines():
-                        log.info(f"[scheduler] {line}")
-                if result.stderr:
-                    for line in result.stderr.strip().splitlines():
-                        log.warning(f"[scheduler] {line}")
+            log.info("[scheduler] Triggering sms_queue_poller.py (15-min interval)")
+            result = subprocess.run(
+                ["python3", script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=str(SCRIPTS_DIR),
+            )
+            log.info(f"[scheduler] sms_queue_poller exit={result.returncode}")
+            if result.stdout:
+                for line in result.stdout.strip().splitlines():
+                    log.info(f"[scheduler] {line}")
+            if result.stderr:
+                for line in result.stderr.strip().splitlines():
+                    log.warning(f"[scheduler] {line}")
         except Exception as e:
             log.error(f"[scheduler] sms_queue_poller error: {e}")
-        time.sleep(60)
+        time.sleep(900)
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
@@ -456,7 +451,7 @@ if __name__ == "__main__":
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
     log.info(f"Whitelist:   {list(WHITELIST.keys())}")
-    log.info("Scheduler:   sms_queue_poller @ 11:30 UTC daily")
+    log.info("Scheduler:   sms_queue_poller every 15 min")
     log.info("=" * 60)
 
     scheduler = threading.Thread(target=_sms_scheduler, daemon=True)
