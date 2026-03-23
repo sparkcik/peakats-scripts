@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
 sms_queue_poller.py
-Polls sms_send_queue in Supabase, fires pending messages via Twilio.
-Runs on forge-local (Fly.io) -- invoke via cron or forge-bridge.
+Polls sms_send_queue in Supabase, fires pending messages via RC or Twilio.
+
+ROUTING RULE (locked 2026-03-23):
+  migration_status = 'rc_active'     → send via RingCentral API (DEFAULT)
+  migration_status = 'twilio_active' → send via Twilio (ONLY when A2P approved)
+
+RC is the default platform. Twilio is blocked until A2P campaign approval.
+Never change this routing without explicit Charles approval.
 
 Usage:
   python3 sms_queue_poller.py          # process all due messages
@@ -15,25 +21,31 @@ import json
 import requests
 from datetime import datetime, timezone
 
-# ── Twilio Config ─────────────────────────────────────────────────────────────
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'AC7c95b5dfb1d6bda35b75cc16186e653c')
-TWILIO_AUTH_TOKEN  = os.environ.get('TWILIO_AUTH_TOKEN', '609a3c093480bbe58382ac8ac1afe468')
-TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '+14704704766')
+# ── RC Config (primary) ───────────────────────────────────────────────────────
+RC_JWT            = os.environ.get('RC_JWT', 'eyJraWQiOiI4NzYyZjU5OGQwNTk0NGRiODZiZjVjYTk3ODA0NzYwOCIsInR5cCI6IkpXVCIsImFsZyI6IlJTMjU2In0.eyJhdWQiOiJodHRwczovL3BsYXRmb3JtLnJpbmdjZW50cmFsLmNvbS9yZXN0YXBpL29hdXRoL3Rva2VuIiwic3ViIjoiNTM2NDg0MDMwIiwiaXNzIjoiaHR0cHM6Ly9wbGF0Zm9ybS5yaW5nY2VudHJhbC5jb20iLCJleHAiOjM5MjEyMTIzNTksImlhdCI6MTc3MzcyODcxMiwianRpIjoib3IxQTdEUTFULUdLTU5MY0lPSDRzQSJ9.Jwz40n4cSYp5Ke7j3jGJSeY1g-nPPsUbXS8PMw_gmKRGVTp22O4BzCMxSJIFkAde_FOVEOjtqrHCwYha7fj04WPDPI528z1fyTbavivHTb5pYRlQRDVboeL-3GBftOdS4EFt1cDWhA-qDfUO_9ClpxbnBUbWZbWnSNE4oLoZyf8TeC86GvHvftQTljTFzYlKNNA7wHhNAGCygDVMq6NVDIacXB81XADVpJ2DPtRI58M5CvJphnmqzeoYsIVNaQC8C5n-GyQxSGGXleIO6VVxeQ4LMraUWu_JS52Lhswu-Fb8otWft8ephnWDybhaRcjiCkG1uXQX1yOkOWMYrmTKiA')
+RC_FROM_NUMBER    = os.environ.get('RC_FROM_NUMBER', '4708574325')
+RC_SERVER         = 'https://platform.ringcentral.com'
 
-SUPABASE_URL     = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
-SUPABASE_KEY     = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4')
+# ── Twilio Config (blocked until A2P approved) ────────────────────────────────
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'AC7c95b5dfb1d6bda35b75cc16186e653c')
+TWILIO_AUTH_TOKEN  = os.environ.get('TWILIO_AUTH_TOKEN',  '609a3c093480bbe58382ac8ac1afe468')
+TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '+14704704766')
+TWILIO_A2P_APPROVED = os.environ.get('TWILIO_A2P_APPROVED', 'false').lower() == 'true'
+
+SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4')
 
 DRY_RUN = '--dry-run' in sys.argv
 
-# ── Supabase helpers ──────────────────────────────────────────────────────────
 SB_HEADERS = {
     'apikey': SUPABASE_KEY,
     'Authorization': f'Bearer {SUPABASE_KEY}',
     'Content-Type': 'application/json'
 }
 
+# ── Supabase helpers ──────────────────────────────────────────────────────────
+
 def get_due_messages():
-    """Fetch all pending messages where scheduled_for <= now."""
     now = datetime.now(timezone.utc).isoformat()
     resp = requests.get(
         f'{SUPABASE_URL}/rest/v1/sms_send_queue',
@@ -47,25 +59,28 @@ def get_due_messages():
     resp.raise_for_status()
     return resp.json()
 
-def mark_sent(msg_id, twilio_sid, candidate_id=None, template_name=''):
+
+def mark_sent(msg_id, message_sid, candidate_id=None, template_name='', platform='rc'):
     now = datetime.now(timezone.utc).isoformat()
+    update = {
+        'status': 'sent',
+        'sent_at': now,
+        'delivery_status': 'delivered',
+        'updated_at': now
+    }
+    if platform == 'rc':
+        update['rc_message_id'] = message_sid
+    else:
+        update['twilio_sid'] = message_sid
     requests.patch(
         f'{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{msg_id}',
-        headers=SB_HEADERS,
-        json={
-            'status': 'sent',
-            'sent_at': now,
-            'twilio_sid': twilio_sid,
-            'delivery_status': 'delivered',
-            'updated_at': now
-        }
+        headers=SB_HEADERS, json=update
     )
-    # Write-back to candidates table based on template type
     if candidate_id:
         try:
             tpl = (template_name or '').upper()
             patch_data = None
-            if 'MEC' in tpl:
+            if 'MEC' in tpl or 'RE-ENGAGEMENT' in tpl or 'REENGAGEMENT' in tpl:
                 patch_data = {
                     'mec_dl_outreach_sent_at': now,
                     'mec_dl_collection_stage': 'OUTREACH_SENT'
@@ -76,31 +91,26 @@ def mark_sent(msg_id, twilio_sid, candidate_id=None, template_name=''):
                 patch_data['updated_at'] = now
                 requests.patch(
                     f'{SUPABASE_URL}/rest/v1/candidates?id=eq.{candidate_id}',
-                    headers=SB_HEADERS,
-                    json=patch_data
+                    headers=SB_HEADERS, json=patch_data
                 )
                 print(f'         [write-back] Updated candidate {candidate_id}: {list(patch_data.keys())}')
         except Exception as e:
             print(f'         [write-back] Failed for candidate {candidate_id}: {e}')
+
 
 def mark_failed(msg_id, error):
     now = datetime.now(timezone.utc).isoformat()
     requests.patch(
         f'{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{msg_id}',
         headers=SB_HEADERS,
-        json={
-            'status': 'failed',
-            'delivery_error': str(error)[:500],
-            'updated_at': now
-        }
+        json={'status': 'failed', 'delivery_error': str(error)[:500], 'updated_at': now}
     )
 
-def update_comms_log(candidate_id, rc_message_id, body):
-    """Update candidate_comms sent_at and external_message_id for this send."""
+
+def update_comms_log(candidate_id, message_sid, body):
     if not candidate_id:
         return
     now = datetime.now(timezone.utc).isoformat()
-    # Match on candidate_id + body to find the right comms record
     resp = requests.get(
         f'{SUPABASE_URL}/rest/v1/candidate_comms',
         headers=SB_HEADERS,
@@ -118,16 +128,41 @@ def update_comms_log(candidate_id, rc_message_id, body):
         requests.patch(
             f'{SUPABASE_URL}/rest/v1/candidate_comms?id=eq.{comms_id}',
             headers=SB_HEADERS,
-            json={
-                'external_message_id': rc_message_id,
-                'delivery_status': 'delivered',
-                'updated_at': now
-            }
+            json={'sent_at': now, 'external_message_id': message_sid, 'updated_at': now}
         )
 
-# ── Twilio Send ──────────────────────────────────────────────────────────────
-def send_sms(to_number, body):
-    """Send MMS via Twilio REST API. Returns Twilio message SID."""
+# ── RC Send ───────────────────────────────────────────────────────────────────
+
+def send_via_rc(to_number, body):
+    """Send SMS via RingCentral API. Returns RC message ID."""
+    clean = to_number.replace('+1','').replace('-','').replace('(','').replace(')','').replace(' ','')
+    normalized_body = body.replace('\\n', '\n').replace('\\r\\n', '\n')
+    resp = requests.post(
+        f'{RC_SERVER}/restapi/v1.0/account/~/extension/~/sms',
+        headers={
+            'Authorization': f'Bearer {RC_JWT}',
+            'Content-Type': 'application/json'
+        },
+        json={
+            'from': {'phoneNumber': f'+1{RC_FROM_NUMBER}'},
+            'to': [{'phoneNumber': f'+1{clean}'}],
+            'text': normalized_body
+        }
+    )
+    resp.raise_for_status()
+    msg_id = resp.json().get('id', 'unknown')
+    print(f'         [RC] Message ID: {msg_id}')
+    return str(msg_id)
+
+# ── Twilio Send (blocked until A2P approved) ──────────────────────────────────
+
+def send_via_twilio(to_number, body):
+    """Send via Twilio. ONLY call when TWILIO_A2P_APPROVED=true."""
+    if not TWILIO_A2P_APPROVED:
+        raise RuntimeError(
+            'Twilio A2P campaign not approved. Set TWILIO_A2P_APPROVED=true '
+            'only after Charles confirms campaign approval. Use RC instead.'
+        )
     clean = to_number.replace('+1','').replace('-','').replace('(','').replace(')','').replace(' ','')
     try:
         send_body = body.encode('utf-8').decode('unicode_escape')
@@ -140,18 +175,35 @@ def send_sms(to_number, body):
             'From': TWILIO_FROM_NUMBER,
             'To': f'+1{clean}',
             'Body': send_body,
-            'MediaUrl': 'https://httpbin.org/image/png',
             'StatusCallback': 'https://peak-forge-local.fly.dev/twilio/status'
         }
     )
     resp.raise_for_status()
     sid = resp.json().get('sid', 'unknown')
-    print(f'         [MMS] SID: {sid}')
+    print(f'         [Twilio] SID: {sid}')
     return sid
 
+# ── Route send by migration_status ───────────────────────────────────────────
+
+def send_message(msg):
+    """Route to RC or Twilio based on migration_status. RC is default."""
+    to_number        = msg['to_number']
+    body             = msg['body']
+    migration_status = (msg.get('migration_status') or 'rc_active').strip()
+
+    if migration_status == 'twilio_active':
+        print(f'         [ROUTING] twilio_active')
+        return send_via_twilio(to_number, body), 'twilio'
+    else:
+        # rc_active or anything else — always RC until A2P approved
+        print(f'         [ROUTING] rc_active')
+        return send_via_rc(to_number, body), 'rc'
+
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
     print(f'[SMS Poller] {"DRY RUN — " if DRY_RUN else ""}Starting at {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}')
+    print(f'[SMS Poller] Twilio A2P approved: {TWILIO_A2P_APPROVED}')
 
     messages = get_due_messages()
     print(f'[SMS Poller] {len(messages)} message(s) due')
@@ -169,30 +221,29 @@ def main():
         body         = msg['body']
         candidate_id = msg.get('candidate_id')
         template     = msg.get('template_name', 'manual')
+        platform     = (msg.get('migration_status') or 'rc_active')
 
-        print(f'\n[{msg_id}] To: {to_number} | Template: {template}')
+        print(f'\n[{msg_id}] To: {to_number} | Template: {template} | Platform: {platform}')
         print(f'         Preview: {body[:80]}...')
 
         if DRY_RUN:
-            print(f'         [DRY RUN] Would send -- skipping')
+            print(f'         [DRY RUN] Would send via {"Twilio" if platform == "twilio_active" else "RC"} -- skipping')
             continue
 
+        # Normalize line breaks
+        if body:
+            body = body.replace('\\n', '\n').replace('\\r\\n', '\n').replace('\\r', '\n')
+            if '\\n' in body:
+                try:
+                    body = bytes(body, 'utf-8').decode('unicode_escape')
+                except Exception:
+                    pass
+
         try:
-            # Normalize line breaks -- DB stores literal \n as escape sequence
-            if body:
-                body = body.replace('\\n', '\n')
-                body = body.replace('\\r\\n', '\n')
-                body = body.replace('\\r', '\n')
-                # If still no real newlines, try unicode_escape decode
-                if '\\n' in body:
-                    try:
-                        body = bytes(body, 'utf-8').decode('unicode_escape')
-                    except Exception:
-                        pass
-            twilio_sid = send_sms(to_number, body)
-            mark_sent(msg_id, twilio_sid, candidate_id, template)
-            update_comms_log(candidate_id, twilio_sid, body)
-            print(f'         SENT -- Twilio SID: {twilio_sid}')
+            message_sid, used_platform = send_message(msg)
+            mark_sent(msg_id, message_sid, candidate_id, template, used_platform)
+            update_comms_log(candidate_id, message_sid, body)
+            print(f'         SENT via {used_platform.upper()} -- ID: {message_sid}')
             sent += 1
         except Exception as e:
             mark_failed(msg_id, e)
@@ -200,6 +251,7 @@ def main():
             failed += 1
 
     print(f'\n[SMS Poller] Complete. Sent: {sent} | Failed: {failed}')
+
 
 if __name__ == '__main__':
     main()
