@@ -22,9 +22,14 @@ import requests
 from datetime import datetime, timezone
 
 # ── RC Config (primary) ───────────────────────────────────────────────────────
-RC_JWT            = os.environ.get('RC_JWT', 'eyJraWQiOiI4NzYyZjU5OGQwNTk0NGRiODZiZjVjYTk3ODA0NzYwOCIsInR5cCI6IkpXVCIsImFsZyI6IlJTMjU2In0.eyJhdWQiOiJodHRwczovL3BsYXRmb3JtLnJpbmdjZW50cmFsLmNvbS9yZXN0YXBpL29hdXRoL3Rva2VuIiwic3ViIjoiNTM2NDg0MDMwIiwiaXNzIjoiaHR0cHM6Ly9wbGF0Zm9ybS5yaW5nY2VudHJhbC5jb20iLCJleHAiOjM5MjEyMTIzNTksImlhdCI6MTc3MzcyODcxMiwianRpIjoib3IxQTdEUTFULUdLTU5MY0lPSDRzQSJ9.Jwz40n4cSYp5Ke7j3jGJSeY1g-nPPsUbXS8PMw_gmKRGVTp22O4BzCMxSJIFkAde_FOVEOjtqrHCwYha7fj04WPDPI528z1fyTbavivHTb5pYRlQRDVboeL-3GBftOdS4EFt1cDWhA-qDfUO_9ClpxbnBUbWZbWnSNE4oLoZyf8TeC86GvHvftQTljTFzYlKNNA7wHhNAGCygDVMq6NVDIacXB81XADVpJ2DPtRI58M5CvJphnmqzeoYsIVNaQC8C5n-GyQxSGGXleIO6VVxeQ4LMraUWu_JS52Lhswu-Fb8otWft8ephnWDybhaRcjiCkG1uXQX1yOkOWMYrmTKiA')
+RC_CLIENT_ID      = os.environ.get('RC_CLIENT_ID', '1QDQiRjk50kfxvIVYTT3IA')
+RC_CLIENT_SECRET  = os.environ.get('RC_CLIENT_SECRET', 'aTMprgZe1Safik4e4qDBnHaKcnA6o9gb3cafm1xQtJxo')
+RC_JWT            = os.environ.get('RC_JWT', '')
 RC_FROM_NUMBER    = os.environ.get('RC_FROM_NUMBER', '4708574325')
 RC_SERVER         = 'https://platform.ringcentral.com'
+
+_rc_access_token = None
+_rc_token_expiry = 0
 
 # ── Twilio Config (blocked until A2P approved) ────────────────────────────────
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'AC7c95b5dfb1d6bda35b75cc16186e653c')
@@ -131,16 +136,41 @@ def update_comms_log(candidate_id, message_sid, body):
             json={'sent_at': now, 'external_message_id': message_sid, 'updated_at': now}
         )
 
+# ── RC Auth ───────────────────────────────────────────────────────────────────
+
+def get_rc_token():
+    """Exchange RC JWT for an access token. Caches until expiry."""
+    global _rc_access_token, _rc_token_expiry
+    import time as _time
+    now = _time.time()
+    if _rc_access_token and now < _rc_token_expiry - 60:
+        return _rc_access_token
+    resp = requests.post(
+        f'{RC_SERVER}/restapi/oauth/token',
+        auth=(RC_CLIENT_ID, RC_CLIENT_SECRET),
+        data={
+            'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion': RC_JWT,
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _rc_access_token = data['access_token']
+    _rc_token_expiry = now + data.get('expires_in', 3600)
+    print(f'         [RC] Token exchanged, expires in {data.get("expires_in")}s')
+    return _rc_access_token
+
 # ── RC Send ───────────────────────────────────────────────────────────────────
 
 def send_via_rc(to_number, body):
     """Send SMS via RingCentral API. Returns RC message ID."""
+    token = get_rc_token()
     clean = to_number.replace('+1','').replace('-','').replace('(','').replace(')','').replace(' ','')
     normalized_body = body.replace('\\n', '\n').replace('\\r\\n', '\n')
     resp = requests.post(
         f'{RC_SERVER}/restapi/v1.0/account/~/extension/~/sms',
         headers={
-            'Authorization': f'Bearer {RC_JWT}',
+            'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
         },
         json={
