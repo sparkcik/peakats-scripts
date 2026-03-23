@@ -6,6 +6,7 @@ Polls RC inbox, matches candidates, writes to candidate_comms + sms_triage_queue
 Platform-agnostic — swap read function when Twilio replaces RC.
 """
 
+import os
 import sys
 import json
 import requests
@@ -14,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 # ── Config ────────────────────────────────────────────────────────────────────
 RC_CLIENT_ID     = '1QDQiRjk50kfxvIVYTT3IA'
 RC_CLIENT_SECRET = 'aTMprgZe1Safik4e4qDBnHaKcnA6o9gb3cafm1xQtJxo'
-RC_JWT           = 'eyJraWQiOiI4NzYyZjU5OGQwNTk0NGRiODZiZjVjYTk3ODA0NzYwOCIsInR5cCI6IkpXVCIsImFsZyI6IlJTMjU2In0.eyJhdWQiOiJodHRwczovL3BsYXRmb3JtLnJpbmdjZW50cmFsLmNvbS9yZXN0YXBpL29hdXRoL3Rva2VuIiwic3ViIjoiNTM2NDg0MDMwIiwiaXNzIjoiaHR0cHM6Ly9wbGF0Zm9ybS5yaW5nY2VudHJhbC5jb20iLCJleHAiOjM5MjEyMTIzNTksImlhdCI6MTc3MzcyODcxMiwianRpIjoib3IxQTdEUTFULUdLTU5MY0lPSDRzQSJ9.Jwz40n4cSYp5Ke7j3jGJSeY1g-nPPsUbXS8PMw_gmKRGVTp22O4BzCMxSZIFkAde_FOVEOjtqrHCwYha7fj04WPDPI528z1fyTbavivHTb5pYRlQRDVboeL-3GBftOdS4EFt1cDWhA-qDfUO_9ClpxbnBUbWZbWnSNE4oLoZyf8TeC86GvHvftQTljTFzYlKNNA7wHhNAGCygDVMq6NVDIacXB81XADVpJ2DPtRI58M5CvJphnmqzeoYsIVNaQC8C5n-GyQxSGGXleIO6VVxeQ4LMraUWu_JS52Lhswu-Fb8otWft8ephnWDybhaRcjiCkG1uXQX1yOkOWMYrmTKiA'
+RC_JWT           = os.environ.get('RC_JWT', 'eyJraWQiOiI4NzYyZjU5OGQwNTk0NGRiODZiZjVjYTk3ODA0NzYwOCIsInR5cCI6IkpXVCIsImFsZyI6IlJTMjU2In0.eyJhdWQiOiJodHRwczovL3BsYXRmb3JtLnJpbmdjZW50cmFsLmNvbS9yZXN0YXBpL29hdXRoL3Rva2VuIiwic3ViIjoiNTM2NDg0MDMwIiwiaXNzIjoiaHR0cHM6Ly9wbGF0Zm9ybS5yaW5nY2VudHJhbC5jb20iLCJleHAiOjM5MjEyMTIzNTksImlhdCI6MTc3MzcyODcxMiwianRpIjoib3IxQTdEUTFULUdLTU5MY0lPSDRzQSJ9.Jwz40n4cSYp5Ke7j3jGJSeY1g-nPPsUbXS8PMw_gmKRGVTp22O4BzCMxSZIFkAde_FOVEOjtqrHCwYha7fj04WPDPI528z1fyTbavivHTb5pYRlQRDVboeL-3GBftOdS4EFt1cDWhA-qDfUO_9ClpxbnBUbWZbWnSNE4oLoZyf8TeC86GvHvftQTljTFzYlKNNA7wHhNAGCygDVMq6NVDIacXB81XADVpJ2DPtRI58M5CvJphnmqzeoYsIVNaQC8C5n-GyQxSGGXleIO6VVxeQ4LMraUWu_JS52Lhswu-Fb8otWft8ephnWDybhaRcjiCkG1uXQX1yOkOWMYrmTKiA')
 RC_SERVER        = 'https://platform.ringcentral.com'
 
 SUPABASE_URL = 'https://eyopvsmsvbgfuffscfom.supabase.co'
@@ -153,6 +154,115 @@ def log_to_triage(msg, candidate, category):
         json=payload
     )
 
+# ── Autoreply ────────────────────────────────────────────────────────────────
+
+_autoreply_template = None
+_autoreply_loaded = False
+
+def load_autoreply_template():
+    global _autoreply_template, _autoreply_loaded
+    if _autoreply_loaded:
+        return _autoreply_template
+    _autoreply_loaded = True
+    try:
+        resp = requests.get(
+            f'{SUPABASE_URL}/rest/v1/message_templates',
+            headers=SB_HEADERS,
+            params={'template_name': 'eq.Auto-Reply -- Inbound SMS', 'select': 'id,body,template_name', 'limit': '1'}
+        )
+        rows = resp.json() if resp.status_code == 200 else []
+        _autoreply_template = rows[0] if rows else None
+    except Exception:
+        _autoreply_template = None
+    return _autoreply_template
+
+
+def recently_autoreplied(candidate_id):
+    two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    resp = requests.get(
+        f'{SUPABASE_URL}/rest/v1/candidate_comms',
+        headers=SB_HEADERS,
+        params={
+            'candidate_id': f'eq.{candidate_id}',
+            'sent_by': 'eq.rc_inbox_autoreply',
+            'sent_at': f'gte.{two_hours_ago}',
+            'select': 'id',
+            'limit': '1'
+        }
+    )
+    return len(resp.json()) > 0
+
+
+def send_autoreply(token, candidate, from_number):
+    tpl = load_autoreply_template()
+    if not tpl:
+        return
+
+    if recently_autoreplied(candidate['id']):
+        print(f'    [autoreply] Skipped {candidate["first_name"]} {candidate["last_name"]} -- already replied within 2h')
+        return
+
+    body = (tpl['body'] or '').replace('{FIRST}', candidate.get('first_name', ''))
+    clean = from_number.replace('+1', '').replace('-', '').replace('(', '').replace(')', '').replace(' ', '')
+    now = datetime.now(timezone.utc).isoformat()
+
+    if DRY_RUN:
+        print(f'    [autoreply DRY] Would send to {clean}: {body[:80]}')
+        return
+
+    # Send via RC
+    resp = requests.post(
+        f'{RC_SERVER}/restapi/v1.0/account/~/extension/~/sms',
+        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        json={
+            'from': {'phoneNumber': '+14708574325'},
+            'to': [{'phoneNumber': f'+1{clean}'}],
+            'text': body
+        }
+    )
+    resp.raise_for_status()
+    rc_msg_id = str(resp.json().get('id', ''))
+    print(f'    [autoreply] Sent to {candidate["first_name"]} {candidate["last_name"]} ({clean}) RC ID: {rc_msg_id}')
+
+    # Log to candidate_comms
+    requests.post(
+        f'{SUPABASE_URL}/rest/v1/candidate_comms',
+        headers={**SB_HEADERS, 'Prefer': 'return=minimal'},
+        json={
+            'candidate_id': candidate['id'],
+            'client_id': candidate.get('client_id'),
+            'channel': 'sms',
+            'direction': 'outbound',
+            'body': body,
+            'sent_at': now,
+            'sent_by': 'rc_inbox_autoreply',
+            'send_mode': 'automated',
+            'from_number': '4708574325',
+            'to_number': clean,
+            'external_message_id': rc_msg_id,
+            'delivery_status': 'delivered'
+        }
+    )
+
+    # Insert into sms_send_queue so it appears in Kai Comms thread
+    requests.post(
+        f'{SUPABASE_URL}/rest/v1/sms_send_queue',
+        headers={**SB_HEADERS, 'Prefer': 'return=minimal'},
+        json={
+            'to_number': clean,
+            'body': body,
+            'candidate_id': candidate['id'],
+            'template_name': tpl.get('template_name', 'Auto-Reply -- Inbound SMS'),
+            'status': 'sent',
+            'sent_at': now,
+            'rc_message_id': rc_msg_id,
+            'created_by': 'rc_inbox_autoreply',
+            'migration_status': 'rc_active',
+            'scheduled_for': now
+        }
+    )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
@@ -181,11 +291,18 @@ def main():
         if DRY_RUN:
             name = f"{candidate['first_name']} {candidate['last_name']}" if candidate else 'NO MATCH'
             print(f'  [DRY] {from_number} | {name} | {category} | {body[:60]}')
+            if candidate:
+                send_autoreply(token, candidate, from_number)
             new += 1
             continue
 
         log_to_comms(msg, candidate, category)
         log_to_triage(msg, candidate, category)
+        if candidate:
+            try:
+                send_autoreply(token, candidate, from_number)
+            except Exception as e:
+                print(f'    [autoreply] Error for {candidate["id"]}: {e}')
         new += 1
 
     print(f'[RC Cron] Done. New: {new} | Already logged: {skipped}')
