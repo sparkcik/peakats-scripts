@@ -242,8 +242,13 @@ def run(days):
     log.info(f"SMS complete: {sms_count} records persisted")
 
     # Fetch + persist calls (page by page)
-    call_rows, call_count = fetch_and_persist_calls(token, date_from, phone_map)
-    log.info(f"Calls complete: {call_count} records persisted")
+    try:
+        call_rows, call_count = fetch_and_persist_calls(token, date_from, phone_map)
+        log.info(f"Calls complete: {call_count} records persisted")
+    except Exception as e:
+        log.warning(f"Call fetch failed, continuing without call data: {e}")
+        call_rows = []
+        call_count = 0
 
     # Build rc_contact_export
     contacts = defaultdict(lambda: {

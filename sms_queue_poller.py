@@ -55,7 +55,7 @@ def mark_sent(msg_id, twilio_sid, candidate_id=None, template_name=''):
         json={
             'status': 'sent',
             'sent_at': now,
-            'rc_message_id': twilio_sid,
+            'twilio_sid': twilio_sid,
             'delivery_status': 'delivered',
             'updated_at': now
         }
@@ -140,7 +140,8 @@ def send_sms(to_number, body):
             'From': TWILIO_FROM_NUMBER,
             'To': f'+1{clean}',
             'Body': send_body,
-            'MediaUrl': 'https://httpbin.org/image/png'
+            'MediaUrl': 'https://httpbin.org/image/png',
+            'StatusCallback': 'https://peak-forge-local.fly.dev/twilio/status'
         }
     )
     resp.raise_for_status()
@@ -166,8 +167,6 @@ def main():
         msg_id       = msg['id']
         to_number    = msg['to_number']
         body         = msg['body']
-        # Debug: show exact bytes
-        print(f'RAW body bytes: {body.encode()[:100]}')
         candidate_id = msg.get('candidate_id')
         template     = msg.get('template_name', 'manual')
 
@@ -190,7 +189,6 @@ def main():
                         body = bytes(body, 'utf-8').decode('unicode_escape')
                     except Exception:
                         pass
-            print(f'         Body repr: {repr(body[:200])}')
             twilio_sid = send_sms(to_number, body)
             mark_sent(msg_id, twilio_sid, candidate_id, template)
             update_comms_log(candidate_id, twilio_sid, body)

@@ -415,6 +415,24 @@ def twilio_voice_recording():
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
 
 
+@app.route("/twilio/status", methods=["POST"])
+def twilio_status_callback():
+    message_sid = request.form.get("MessageSid", "")
+    message_status = request.form.get("MessageStatus", "")
+    log.info(f"[twilio] Status callback: SID={message_sid} status={message_status}")
+    if message_sid and SUPABASE_URL:
+        now = datetime.now(timezone.utc).isoformat()
+        http_requests.patch(
+            f"{SUPABASE_URL}/rest/v1/sms_send_queue?twilio_sid=eq.{message_sid}",
+            headers=_SB_HEADERS,
+            json={
+                "delivery_status": message_status,
+                "updated_at": now,
+            },
+        )
+    return Response(status=204)
+
+
 # ── Scheduler — SMS Queue Poller (every 15 minutes) ───────────────────────────
 
 def _sms_scheduler():
