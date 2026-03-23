@@ -124,9 +124,9 @@ WHITELIST = {
         "allowed_args": ["--dry-run"],
     },
     "mec_outreach": {
-        "script": str(SCRIPTS_DIR / "scripts" / "mec_outreach_trigger.py"),
-        "description": "MEC outreach — queue Template 15/46/37 SMS based on drug/BG status for MEC/DL collection",
-        "allowed_args": ["--dry-run", "--client", "--limit"],
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_trigger.py"),
+        "description": "MEC/DL outreach — send Template 15/46/37 SMS based on drug/BG status for MEC/DL collection",
+        "allowed_args": [],
     },
 }
 
