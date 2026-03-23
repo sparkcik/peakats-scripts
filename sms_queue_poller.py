@@ -18,6 +18,7 @@ Usage:
 import os
 import sys
 import json
+import time
 import requests
 from datetime import datetime, timezone
 
@@ -276,6 +277,7 @@ def main():
             update_comms_log(candidate_id, message_sid, body)
             print(f'         SENT via {used_platform.upper()} -- ID: {message_sid}')
             sent += 1
+            time.sleep(1.2)
         except Exception as e:
             mark_failed(msg_id, e)
             print(f'         FAILED -- {e}')
