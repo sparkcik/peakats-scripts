@@ -150,6 +150,7 @@ def send_via_rc(to_number, body):
         }
     )
     resp.raise_for_status()
+    print(f'         [RC] Full response: {resp.json()}')
     msg_id = resp.json().get('id', 'unknown')
     print(f'         [RC] Message ID: {msg_id}')
     return str(msg_id)
