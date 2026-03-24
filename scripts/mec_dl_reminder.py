@@ -17,9 +17,8 @@ Usage:
 
 import os
 import sys
-import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # -- Config -------------------------------------------------------------------
 SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
@@ -134,8 +133,10 @@ def run_mec_dl_reminder():
         else:
             print(f'[MEC/DL Reminder] WARNING: Template {tpl_id} not found in message_templates.')
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    base_time = datetime.now(timezone.utc)
+    now_iso = base_time.isoformat()
+    now_str = base_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+    send_index = 0
     count = 0
     skipped = 0
 
@@ -198,9 +199,7 @@ def run_mec_dl_reminder():
                 count += 1
                 continue
 
-            # Pace sends
-            if count > 0:
-                time.sleep(180)
+            scheduled_for = (base_time + timedelta(minutes=3 * send_index)).isoformat()
 
             try:
                 sb_insert('sms_send_queue', {
@@ -212,7 +211,7 @@ def run_mec_dl_reminder():
                     'template_name': 'MEC/DL Cold Re-engagement',
                     'status': 'pending',
                     'channel': 'rc',
-                    'scheduled_for': now_iso,
+                    'scheduled_for': scheduled_for,
                     'created_by': CREATED_BY
                 })
             except Exception as e:
@@ -228,6 +227,7 @@ def run_mec_dl_reminder():
             except Exception as e:
                 print(f'         FAILED to update candidate: {e}')
 
+            send_index += 1
             count += 1
             continue
 
@@ -278,9 +278,7 @@ def run_mec_dl_reminder():
             count += 1
             continue
 
-        # Pace sends
-        if count > 0:
-            time.sleep(180)
+        scheduled_for = (base_time + timedelta(minutes=3 * send_index)).isoformat()
 
         # Queue SMS
         try:
@@ -293,7 +291,7 @@ def run_mec_dl_reminder():
                 'template_name': f'MEC/DL Reminder Day {reminder_count + 1}',
                 'status': 'pending',
                 'channel': 'rc',
-                'scheduled_for': now_iso,
+                'scheduled_for': scheduled_for,
                 'created_by': CREATED_BY
             })
         except Exception as e:
@@ -326,6 +324,7 @@ def run_mec_dl_reminder():
         except Exception as e:
             print(f'         FAILED to update candidate: {e}')
 
+        send_index += 1
         count += 1
 
     # Run summary log to forge_memory
