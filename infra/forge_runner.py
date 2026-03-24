@@ -133,6 +133,21 @@ WHITELIST = {
         "description": "Backfill existing MEC/DL form responses into Supabase",
         "allowed_args": [],
     },
+    "mec_dl_reminder": {
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_reminder.py"),
+        "description": "MEC/DL reminder cadence — 3-day escalating reminders (T16/17/18) for candidates with outreach sent but docs not uploaded",
+        "allowed_args": ["--dry-run"],
+    },
+    "drug_screen_reminder": {
+        "script": str(SCRIPTS_DIR / "scripts" / "drug_screen_reminder.py"),
+        "description": "Drug screen reminder cadence — 3-day escalating reminders (T48/49/50) for candidates with drug outreach sent but test not started",
+        "allowed_args": ["--dry-run"],
+    },
+    "fadv_action_reminder": {
+        "script": str(SCRIPTS_DIR / "scripts" / "fadv_action_reminder.py"),
+        "description": "FADV action reminder cadence — 3-day escalating reminders (T42/43/44) for candidates needing further review action",
+        "allowed_args": ["--dry-run"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
