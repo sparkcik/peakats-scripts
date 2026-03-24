@@ -148,6 +148,11 @@ WHITELIST = {
         "description": "FADV action reminder cadence — 3-day escalating reminders (T42/43/44) for candidates needing further review action",
         "allowed_args": ["--dry-run"],
     },
+    "gcic_reminder": {
+        "script": str(SCRIPTS_DIR / "scripts" / "gcic_reminder.py"),
+        "description": "GCIC reminder cadence — 3-day escalating reminders (T8/9/10) for candidates with GCIC outreach sent but form not completed",
+        "allowed_args": ["--dry-run"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
