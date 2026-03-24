@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 mec_dl_reminder.py
-Automated 3-day reminder cadence for candidates who received MEC/DL outreach
+Automated reminder cadence for candidates who received MEC/DL outreach
 but have not yet uploaded their documents.
 
-Day 1: Template 16 (gentle nudge)
-Day 2: Template 17 (firmer follow-up)
-Day 3: Template 18 (final reminder + escalation to PEAK Ops)
+Date split logic:
+  - created_at BEFORE 2026-02-01: Template 52 (cold re-engagement), one-shot
+  - created_at 2026-02-01+: Day 1 T16, Day 2 T17, Day 3 T18 (escalation)
 
 Runs on forge-local (Fly.io) via forge_runner.py scheduler.
 
@@ -17,6 +17,7 @@ Usage:
 
 import os
 import sys
+import time
 import requests
 from datetime import datetime, timezone
 
@@ -27,6 +28,8 @@ FROM_NUMBER = '+14704704766'
 CREATED_BY = 'mec_dl_reminder'
 
 DRY_RUN = '--dry-run' in sys.argv
+
+COLD_CUTOFF = datetime(2026, 2, 1, tzinfo=timezone.utc)
 
 # -- Supabase helpers ---------------------------------------------------------
 SB_HEADERS = {
@@ -106,7 +109,7 @@ def run_mec_dl_reminder():
 
     # Fetch candidates with outreach sent but docs not uploaded
     candidates = sb_get('candidates', {
-        'select': 'id,first_name,last_name,client_id,phone,mec_reminder_count,mec_last_reminder_at,mec_dl_outreach_sent_at,mec_uploaded,dl_verified',
+        'select': 'id,first_name,last_name,client_id,phone,mec_reminder_count,mec_last_reminder_at,mec_dl_outreach_sent_at,mec_uploaded,dl_verified,created_at',
         'mec_dl_collection_stage': 'eq.OUTREACH_SENT',
         'or': '(mec_uploaded.is.null,mec_uploaded.eq.0,dl_verified.is.null,dl_verified.eq.0)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
@@ -122,9 +125,9 @@ def run_mec_dl_reminder():
         print('[MEC/DL Reminder] Nothing to send. Exiting.')
         return
 
-    # Pre-fetch templates
+    # Pre-fetch templates (Day 1/2/3 + cold re-engagement)
     templates = {}
-    for tpl_id in (16, 17, 18):
+    for tpl_id in (16, 17, 18, 52):
         body = get_template_body(tpl_id)
         if body:
             templates[tpl_id] = body
@@ -145,12 +148,90 @@ def run_mec_dl_reminder():
         reminder_count = c.get('mec_reminder_count') or 0
         last_reminder = c.get('mec_last_reminder_at')
         outreach_sent = c.get('mec_dl_outreach_sent_at')
+        created_at_raw = c.get('created_at')
 
         if not phone:
             skipped += 1
             continue
 
-        # Determine which day reminder to send
+        # Parse created_at for date split
+        is_cold = False
+        if created_at_raw:
+            try:
+                created_dt = datetime.fromisoformat(created_at_raw.replace('Z', '+00:00'))
+                is_cold = created_dt < COLD_CUTOFF
+            except (ValueError, TypeError):
+                pass
+
+        # -- Cold re-engagement (pre-Feb 2026) --
+        if is_cold:
+            if reminder_count > 0:
+                # Already sent cold re-engagement
+                skipped += 1
+                continue
+
+            if not outreach_sent:
+                skipped += 1
+                continue
+
+            # Check 1-day elapsed since outreach
+            try:
+                sent_dt = datetime.fromisoformat(outreach_sent.replace('Z', '+00:00'))
+                if (datetime.now(timezone.utc) - sent_dt).total_seconds() < 86400:
+                    skipped += 1
+                    continue
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+
+            tpl_id = 52
+            if tpl_id not in templates:
+                print(f'  [{cid}] {first} {last} -- skipping, template 52 not found')
+                skipped += 1
+                continue
+
+            body = substitute_first_name(templates[tpl_id], first)
+            print(f'  [{cid}] {first} {last} ({client}) -> T52 Cold Re-engagement -> {phone}')
+
+            if DRY_RUN:
+                print(f'         [DRY RUN] Would queue T52 -- skipping')
+                count += 1
+                continue
+
+            # Pace sends
+            if count > 0:
+                time.sleep(180)
+
+            try:
+                sb_insert('sms_send_queue', {
+                    'candidate_id': cid,
+                    'to_number': phone,
+                    'from_number': FROM_NUMBER,
+                    'body': body,
+                    'template_id': tpl_id,
+                    'template_name': 'MEC/DL Cold Re-engagement',
+                    'status': 'pending',
+                    'channel': 'rc',
+                    'scheduled_for': now_iso,
+                    'created_by': CREATED_BY
+                })
+            except Exception as e:
+                print(f'         FAILED to queue SMS: {e}')
+                continue
+
+            try:
+                sb_patch('candidates', {'id': f'eq.{cid}'}, {
+                    'mec_reminder_count': 1,
+                    'mec_last_reminder_at': now_iso,
+                    'updated_at': now_iso
+                })
+            except Exception as e:
+                print(f'         FAILED to update candidate: {e}')
+
+            count += 1
+            continue
+
+        # -- Active candidates (Feb 2026+): Day 1/2/3 logic --
         tpl_id = None
         compare_time = None
 
@@ -197,6 +278,10 @@ def run_mec_dl_reminder():
             count += 1
             continue
 
+        # Pace sends
+        if count > 0:
+            time.sleep(180)
+
         # Queue SMS
         try:
             sb_insert('sms_send_queue', {
@@ -207,6 +292,7 @@ def run_mec_dl_reminder():
                 'template_id': tpl_id,
                 'template_name': f'MEC/DL Reminder Day {reminder_count + 1}',
                 'status': 'pending',
+                'channel': 'rc',
                 'scheduled_for': now_iso,
                 'created_by': CREATED_BY
             })
