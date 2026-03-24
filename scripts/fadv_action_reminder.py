@@ -82,7 +82,7 @@ def format_phone(phone):
 
 # -- Template fetch -----------------------------------------------------------
 def get_template_body(template_id):
-    rows = sb_get('sms_templates', {
+    rows = sb_get('message_templates', {
         'select': 'body',
         'id': f'eq.{template_id}'
     })
@@ -127,7 +127,7 @@ def run_fadv_action_reminder():
         if body:
             templates[tpl_id] = body
         else:
-            print(f'[FADV Action Reminder] WARNING: Template {tpl_id} not found in sms_templates.')
+            print(f'[FADV Action Reminder] WARNING: Template {tpl_id} not found in message_templates.')
 
     now_iso = datetime.now(timezone.utc).isoformat()
     now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')

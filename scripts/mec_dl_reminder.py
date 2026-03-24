@@ -82,8 +82,8 @@ def format_phone(phone):
 
 # -- Template fetch -----------------------------------------------------------
 def get_template_body(template_id):
-    """Fetch template body from sms_templates table."""
-    rows = sb_get('sms_templates', {
+    """Fetch template body from message_templates table."""
+    rows = sb_get('message_templates', {
         'select': 'body',
         'id': f'eq.{template_id}'
     })
@@ -129,7 +129,7 @@ def run_mec_dl_reminder():
         if body:
             templates[tpl_id] = body
         else:
-            print(f'[MEC/DL Reminder] WARNING: Template {tpl_id} not found in sms_templates.')
+            print(f'[MEC/DL Reminder] WARNING: Template {tpl_id} not found in message_templates.')
 
     now_iso = datetime.now(timezone.utc).isoformat()
     now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
