@@ -82,27 +82,44 @@ def extract_file_id(url):
 
 
 def find_candidate(phone, first, last):
+    select = 'id,first_name,last_name,phone,client_id,mec_uploaded,dl_verified'
+    # Strip headers that confuse GET -- use minimal headers for reads
+    get_headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+    }
     if phone:
+        clean = re.sub(r'\D', '', phone)
+        if len(clean) == 11 and clean[0] == '1':
+            clean = clean[1:]
         r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/candidates"
-            f"?select=id,first_name,last_name,phone,client_id,mec_uploaded,dl_verified"
-            f"&phone=eq.{phone}&limit=2",
-            headers=SB_HEADERS
+            f"{SUPABASE_URL}/rest/v1/candidates",
+            headers=get_headers,
+            params={
+                'select': select,
+                'phone': f'eq.{clean}',
+                'limit': '2'
+            }
         )
-        results = r.json()
-        if len(results) == 1:
+        results = r.json() if r.status_code == 200 else []
+        if isinstance(results, list) and len(results) == 1:
             return results[0]
+        if isinstance(results, list) and len(results) > 1:
+            print(f"  [match] Multiple candidates for phone {clean}, skipping phone match")
     # Name fallback
     if first and last:
         r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/candidates"
-            f"?select=id,first_name,last_name,phone,client_id,mec_uploaded,dl_verified"
-            f"&first_name=ilike.{requests.utils.quote(first)}"
-            f"&last_name=ilike.{requests.utils.quote(last)}&limit=2",
-            headers=SB_HEADERS
+            f"{SUPABASE_URL}/rest/v1/candidates",
+            headers=get_headers,
+            params={
+                'select': select,
+                'first_name': f'ilike.{first}',
+                'last_name': f'ilike.{last}',
+                'limit': '2'
+            }
         )
-        results = r.json()
-        if len(results) == 1:
+        results = r.json() if r.status_code == 200 else []
+        if isinstance(results, list) and len(results) == 1:
             return results[0]
     return None
 
@@ -190,7 +207,7 @@ def run():
         last      = get('Last Name').title()
         raw_phone = get('Phone Number')
         mec_url   = get('Medical Certificate (MEC)')
-        dl_url    = get('Driver License (front only)')
+        dl_url    = get("Driver's License (photo of front only)")
         phone     = normalize_phone(raw_phone)
 
         print(f"\nRow {i+1}: {first} {last} | phone={phone} | mec={'yes' if mec_url else 'no'} | dl={'yes' if dl_url else 'no'}")
