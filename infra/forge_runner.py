@@ -22,6 +22,7 @@ import logging
 import json
 import threading
 import time
+import schedule
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, request, jsonify, Response
@@ -485,20 +486,64 @@ def _sms_scheduler():
         time.sleep(900)
 
 
+# ── Scheduler — Daily Reminders + GCIC Outreach ──────────────────────────────
+
+def _run_script(command):
+    """Execute a whitelisted script by command name."""
+    script_path = WHITELIST.get(command, {}).get("script")
+    if not script_path:
+        log.warning(f"[scheduler] Unknown command: {command}")
+        return
+    try:
+        log.info(f"[scheduler] Running {command}")
+        result = subprocess.run(
+            ["python3", script_path],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(SCRIPTS_DIR),
+        )
+        log.info(f"[scheduler] {command} exit={result.returncode}")
+        if result.stdout:
+            for line in result.stdout.strip().splitlines():
+                log.info(f"[scheduler] {line}")
+        if result.stderr:
+            for line in result.stderr.strip().splitlines():
+                log.warning(f"[scheduler] {line}")
+    except Exception as e:
+        log.error(f"[scheduler] {command} error: {e}")
+
+
+def _daily_scheduler():
+    """Background thread: fires daily reminder scripts at 8am UTC."""
+    schedule.every().day.at("08:00").do(_run_script, "gcic_reminder")
+    schedule.every().day.at("08:05").do(_run_script, "mec_dl_reminder")
+    schedule.every().day.at("08:10").do(_run_script, "drug_screen_reminder")
+    schedule.every().day.at("08:15").do(_run_script, "fadv_action_reminder")
+    schedule.every(30).minutes.do(_run_script, "gcic_outreach")
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info("forge-runner v1.2.0 starting")
+    log.info("forge-runner v1.3.0 starting")
     log.info(f"Port:        {PORT}")
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
     log.info(f"Whitelist:   {list(WHITELIST.keys())}")
     log.info("Scheduler:   sms_queue_poller every 15 min")
+    log.info("Scheduler:   daily reminders at 08:00 UTC, gcic_outreach every 30 min")
     log.info("=" * 60)
 
     scheduler = threading.Thread(target=_sms_scheduler, daemon=True)
     scheduler.start()
+
+    daily = threading.Thread(target=_daily_scheduler, daemon=True)
+    daily.start()
 
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)

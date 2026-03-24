@@ -428,9 +428,14 @@ function processFadvActionEmails() {
           sendSms_(candidate.phone, smsBody);
         }
 
-        // Mark SMS sent
+        // Mark SMS sent + seed reminder cadence
         supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-          fadv_action_sms_sent_at: new Date().toISOString()
+          fadv_action_required:    true,
+          fadv_action_sent_at:     new Date().toISOString(),
+          fadv_action_sms_sent_at: new Date().toISOString(),
+          fadv_action_link:        profileLink || null,
+          fadv_action_reason:      reason || null,
+          fadv_action_expires:     expiryIso || null
         });
 
         sent++;
