@@ -128,6 +128,11 @@ WHITELIST = {
         "description": "MEC/DL outreach — send Template 15/46/37 SMS based on drug/BG status for MEC/DL collection",
         "allowed_args": [],
     },
+    "mec_dl_backfill": {
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_backfill.py"),
+        "description": "Backfill existing MEC/DL form responses into Supabase",
+        "allowed_args": [],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
