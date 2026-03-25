@@ -154,6 +154,11 @@ WHITELIST = {
         "description": "GCIC reminder cadence — 3-day escalating reminders (T8/9/10) for candidates with GCIC outreach sent but form not completed",
         "allowed_args": ["--dry-run"],
     },
+    "mec_dl_fup": {
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_fup_scheduler.py"),
+        "description": "MEC/DL follow-up scheduler",
+        "allowed_args": [],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
