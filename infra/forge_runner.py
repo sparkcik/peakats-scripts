@@ -159,6 +159,9 @@ WHITELIST = {
         "description": "MEC/DL follow-up scheduler",
         "allowed_args": [],
     },
+    "day1_link": {
+        "script": "scripts/day1_link.py",
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
