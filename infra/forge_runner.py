@@ -161,6 +161,11 @@ WHITELIST = {
     },
     "day1_link": {
         "script": "scripts/day1_link.py",
+        "allowed_args": [
+            "--candidate-id", "--poc-contact-id", "--start-date",
+            "--start-time", "--address", "--client-name",
+            "--poc-pronoun", "--poc-pronoun-obj", "--dry-run"
+        ],
     },
 }
 
