@@ -167,6 +167,10 @@ WHITELIST = {
             "--poc-pronoun", "--poc-pronoun-obj", "--dry-run"
         ],
     },
+    "rc_ringout": {
+        "script": "scripts/rc_ringout.py",
+        "allowed_args": ["--to"],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
