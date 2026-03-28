@@ -136,22 +136,22 @@ WHITELIST = {
     },
     "mec_dl_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_reminder.py"),
-        "description": "MEC/DL reminder cadence — 3-day escalating reminders (T16/17/18) for candidates with outreach sent but docs not uploaded",
+        "description": "MEC/DL reminder cadence -- 3-day escalating reminders (T16/17/18) for candidates with outreach sent but docs not uploaded",
         "allowed_args": ["--dry-run"],
     },
     "drug_screen_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "drug_screen_reminder.py"),
-        "description": "Drug screen reminder cadence — 3-day escalating reminders (T48/49/50) for candidates with drug outreach sent but test not started",
+        "description": "Drug screen reminder cadence -- 3-day escalating reminders (T48/49/50) for candidates with drug outreach sent but test not started",
         "allowed_args": ["--dry-run"],
     },
     "fadv_action_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "fadv_action_reminder.py"),
-        "description": "FADV action reminder cadence — 3-day escalating reminders (T42/43/44) for candidates needing further review action",
+        "description": "FADV action reminder cadence -- 3-day escalating reminders (T42/43/44) for candidates needing further review action",
         "allowed_args": ["--dry-run"],
     },
     "gcic_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "gcic_reminder.py"),
-        "description": "GCIC reminder cadence — 3-day escalating reminders (T8/9/10) for candidates with GCIC outreach sent but form not completed",
+        "description": "GCIC reminder cadence -- 3-day escalating reminders (T8/9/10) for candidates with GCIC outreach sent but form not completed",
         "allowed_args": ["--dry-run"],
     },
     "mec_dl_fup": {
@@ -170,6 +170,11 @@ WHITELIST = {
     "rc_ringout": {
         "script": "scripts/rc_ringout.py",
         "allowed_args": ["--to"],
+    },
+    "indeed_intake": {
+        "script": str(SCRIPTS_DIR / "scripts" / "indeed_intake_processor.py"),
+        "description": "Indeed intake -- fetch portal pages via Chrome cookies, parse resumes, score + write to Supabase",
+        "allowed_args": ["--dry_run", "--batch_size", "--station", "--skip_score"],
     },
 }
 
@@ -456,6 +461,35 @@ def twilio_voice_recording():
     else:
         log.warning(f"[twilio] No candidate match for voicemail from {from_number}")
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
+
+
+@app.route("/voicemail", methods=["POST"])
+def voicemail_webhook():
+    from_num = _clean_phone(request.form.get("From", ""))
+    call_sid = request.form.get("CallSid", "")
+    rec_url = request.form.get("RecordingUrl", "")
+    duration = int(request.form.get("RecordingDuration", 0) or 0)
+    transcript = request.form.get("TranscriptionText", "")
+    log.info(f"[voicemail] From {from_num} sid={call_sid} duration={duration}s")
+    candidate = _match_candidate(from_num)
+    http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/twilio_voicemail",
+        headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+        json={
+            "call_sid": call_sid,
+            "recording_url": (rec_url + ".mp3") if rec_url else None,
+            "from_number": from_num,
+            "duration_seconds": duration,
+            "transcript": transcript or None,
+            "candidate_id": candidate["id"] if candidate else None,
+            "candidate_name": f"{candidate['first_name']} {candidate['last_name']}" if candidate else None,
+        },
+    )
+    if candidate:
+        log.info(f"[voicemail] Logged -> candidate {candidate['id']}")
+    else:
+        log.warning(f"[voicemail] No candidate match for {from_num}")
+    return Response(TWIML_EMPTY, mimetype="application/xml")
 
 
 @app.route("/twilio/status", methods=["POST"])
