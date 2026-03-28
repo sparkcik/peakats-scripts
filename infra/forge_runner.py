@@ -488,6 +488,17 @@ def voicemail_webhook():
     return Response('<?xml version="1.0"?><Response></Response>', mimetype='text/xml')
 
 
+@app.route('/voicemail/audio', methods=['GET'])
+def voicemail_audio():
+    import requests as req
+    from flask import Response, request as freq
+    recording_url = freq.args.get('url','')
+    if not recording_url or 'twilio.com' not in recording_url:
+        return Response('Invalid URL', status=400)
+    r = req.get(recording_url, auth=(os.environ.get('TWILIO_ACCOUNT_SID',''), os.environ.get('TWILIO_AUTH_TOKEN','')), stream=True)
+    return Response(r.content, mimetype='audio/mpeg')
+
+
 @app.route("/twilio/status", methods=["POST"])
 def twilio_status_callback():
     message_sid = request.form.get("MessageSid", "")
