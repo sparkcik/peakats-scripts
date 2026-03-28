@@ -61,7 +61,7 @@ def main():
     body = f"""{candidate["first_name"]}, great connecting you with {poc["first_name"]} at {args.client_name}.
 
 You are confirmed to start {args.start_date}.
-Please report to {args.address}, arriving {args.start_time}. {poc["first_name"]} will walk you through everything when you arrive. Call {args.poc_pronoun} directly on arrival so {args.poc_pronoun_obj} can bring you through.
+Please report to {args.address}, arriving {args.start_time}. {poc["first_name"]} will walk you through everything when you arrive. Call {args.poc_pronoun_obj} directly on arrival so {args.poc_pronoun} can bring you through.
 
 {poc["first_name"]}, {candidate["first_name"]} is all set and ready to go.
 Looking forward to a great start - K

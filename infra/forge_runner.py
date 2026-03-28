@@ -176,6 +176,10 @@ WHITELIST = {
         "description": "Indeed intake -- fetch portal pages via Chrome cookies, parse resumes, score + write to Supabase",
         "allowed_args": ["--dry_run", "--batch_size", "--station", "--skip_score"],
     },
+    "twilio_call_sync": {
+        "script": "scripts/twilio_call_sync.py",
+        "allowed_args": [],
+    },
 }
 
 # ── Safe shell commands (read-only whitelist) ───────────────────────────────────
@@ -579,6 +583,7 @@ def _daily_scheduler():
     schedule.every().day.at("08:10").do(_run_script, "drug_screen_reminder")
     schedule.every().day.at("08:15").do(_run_script, "fadv_action_reminder")
     schedule.every(30).minutes.do(_run_script, "gcic_outreach")
+    schedule.every(30).minutes.do(_run_script, "twilio_call_sync")
     while True:
         schedule.run_pending()
         time.sleep(60)
