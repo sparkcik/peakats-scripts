@@ -463,33 +463,29 @@ def twilio_voice_recording():
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
 
 
-@app.route("/voicemail", methods=["POST"])
+@app.route('/voicemail', methods=['POST'])
 def voicemail_webhook():
-    from_num = _clean_phone(request.form.get("From", ""))
-    call_sid = request.form.get("CallSid", "")
-    rec_url = request.form.get("RecordingUrl", "")
-    duration = int(request.form.get("RecordingDuration", 0) or 0)
-    transcript = request.form.get("TranscriptionText", "")
-    log.info(f"[voicemail] From {from_num} sid={call_sid} duration={duration}s")
-    candidate = _match_candidate(from_num)
-    http_requests.post(
-        f"{SUPABASE_URL}/rest/v1/twilio_voicemail",
-        headers={**_SB_HEADERS, "Prefer": "return=minimal"},
-        json={
-            "call_sid": call_sid,
-            "recording_url": (rec_url + ".mp3") if rec_url else None,
-            "from_number": from_num,
-            "duration_seconds": duration,
-            "transcript": transcript or None,
-            "candidate_id": candidate["id"] if candidate else None,
-            "candidate_name": f"{candidate['first_name']} {candidate['last_name']}" if candidate else None,
-        },
-    )
-    if candidate:
-        log.info(f"[voicemail] Logged -> candidate {candidate['id']}")
-    else:
-        log.warning(f"[voicemail] No candidate match for {from_num}")
-    return Response(TWIML_EMPTY, mimetype="application/xml")
+    import requests as req
+    from_num = request.form.get('From','').replace('+1','')[-10:]
+    call_sid = request.form.get('CallSid','')
+    rec_url  = request.form.get('RecordingUrl','')
+    duration = int(request.form.get('RecordingDuration',0) or 0)
+    transcript = request.form.get('TranscriptionText','')
+    SB_URL = os.environ['SUPABASE_URL']
+    SB_KEY = os.environ['SUPABASE_KEY']
+    SB = {'apikey':SB_KEY,'Authorization':f'Bearer {SB_KEY}','Content-Type':'application/json','Prefer':'return=minimal'}
+    r = req.get(f'{SB_URL}/rest/v1/candidates?select=id,first_name,last_name&phone=eq.{from_num}', headers=SB)
+    cands = r.json() if r.ok else []
+    req.post(f'{SB_URL}/rest/v1/twilio_voicemail', headers=SB, json={
+        'call_sid': call_sid,
+        'recording_url': rec_url + '.mp3' if rec_url else None,
+        'from_number': from_num,
+        'duration_seconds': duration,
+        'transcript': transcript,
+        'candidate_id': cands[0]['id'] if cands else None,
+        'candidate_name': f"{cands[0]['first_name']} {cands[0]['last_name']}" if cands else None,
+    })
+    return Response('<?xml version="1.0"?><Response></Response>', mimetype='text/xml')
 
 
 @app.route("/twilio/status", methods=["POST"])
