@@ -492,6 +492,19 @@ def voicemail_webhook():
     return Response('<?xml version="1.0"?><Response></Response>', mimetype='text/xml')
 
 
+@app.route('/token', methods=['GET', 'POST'])
+def twilio_token():
+    from twilio.jwt.client import ClientCapabilityToken
+    account_sid = os.environ.get('TWILIO_ACCOUNT_SID','')
+    auth_token = os.environ.get('TWILIO_AUTH_TOKEN','')
+    capability = ClientCapabilityToken(account_sid, auth_token)
+    capability.allow_client_outgoing(os.environ.get('TWILIO_TWIML_APP_SID',''))
+    capability.allow_client_incoming('kai')
+    token = capability.to_jwt()
+    from flask import jsonify
+    return jsonify({'token': token.decode('utf-8') if isinstance(token, bytes) else token})
+
+
 @app.route('/voicemail/audio', methods=['GET'])
 def voicemail_audio():
     import requests as req
