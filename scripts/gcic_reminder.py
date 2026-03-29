@@ -18,6 +18,7 @@ Usage:
 import os
 import sys
 import requests
+import pytz
 from datetime import datetime, timedelta, timezone
 
 # -- Config -------------------------------------------------------------------
@@ -97,6 +98,44 @@ def substitute_first_name(body, first_name):
     for token in ['[FIRST]', '{FIRST}', '[FIRST_NAME]']:
         result = result.replace(token, first_name)
     return result
+
+
+def enforce_blackout(dt):
+    """Push any send time in blackout window (9PM-7:29AM ET) to 7:30AM ET same or next day."""
+    ET = pytz.timezone('America/New_York')
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    dt_et = dt.astimezone(ET)
+    hour = dt_et.hour
+    minute = dt_et.minute
+    in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour >= 21)
+    if in_blackout:
+        delivery = dt_et.replace(hour=7, minute=30, second=0, microsecond=0)
+        if dt_et.hour >= 21:
+            delivery = delivery + timedelta(days=1)
+        return delivery.astimezone(pytz.utc)
+    return dt
+
+
+def already_sent(sb_url, sb_key, candidate_id, template_name, hours=20):
+    """Return True if this template was already sent/pending to this candidate in last N hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    r = requests.get(
+        f'{sb_url}/rest/v1/sms_send_queue',
+        headers={'apikey': sb_key, 'Authorization': f'Bearer {sb_key}'},
+        params={
+            'candidate_id': f'eq.{candidate_id}',
+            'template_name': f'eq.{template_name}',
+            'status': 'in.(sent,pending)',
+            'created_at': f'gte.{cutoff}',
+            'limit': '1',
+            'select': 'id'
+        }
+    )
+    try:
+        return len(r.json()) > 0
+    except Exception:
+        return False
 
 
 # -- Main ---------------------------------------------------------------------
@@ -198,7 +237,13 @@ def run_gcic_reminder():
             count += 1
             continue
 
-        scheduled_for = (base_time + timedelta(minutes=3 * send_index)).isoformat()
+        template_name = f'GCIC Reminder Day {reminder_count + 1}'
+        if already_sent(SUPABASE_URL, SUPABASE_KEY, cid, template_name):
+            print(f'  [dedup] Skipping {template_name} for candidate {cid} -- already sent')
+            skipped += 1
+            continue
+
+        scheduled_for = enforce_blackout(base_time + timedelta(minutes=3 * send_index)).isoformat()
 
         # Queue SMS
         try:
@@ -208,7 +253,7 @@ def run_gcic_reminder():
                 'from_number': FROM_NUMBER,
                 'body': body,
                 'template_id': tpl_id,
-                'template_name': f'GCIC Reminder Day {reminder_count + 1}',
+                'template_name': template_name,
                 'status': 'pending',
                 'channel': 'rc',
                 'scheduled_for': scheduled_for,
