@@ -104,7 +104,7 @@ def run_fadv_action_reminder():
 
     # Fetch candidates with FADV action sent but not resolved
     candidates = sb_get('candidates', {
-        'select': 'id,first_name,last_name,client_id,phone,fadv_action_reminder_count,fadv_action_last_reminder_at,fadv_action_sent_at',
+        'select': 'id,first_name,last_name,client_id,phone,fadv_action_reminder_count,fadv_action_last_reminder_at,fadv_action_sent_at,fadv_action_link,fadv_action_expires,fadv_action_reason',
         'background_status': 'eq.Needs Further Review',
         'fadv_action_sent_at': 'not.is.null',
         'fadv_action_resolved_at': 'is.null',
@@ -185,7 +185,11 @@ def run_fadv_action_reminder():
             skipped += 1
             continue
 
-        body = substitute_first_name(templates[tpl_id], first)
+        body = templates[tpl_id]
+        body = body.replace('{First}', first or '')
+        body = body.replace('{expiry_date}', str(c.get('fadv_action_expires') or 'as soon as possible'))
+        body = body.replace('{link}', str(c.get('fadv_action_link') or ''))
+        body = body.replace('{reason}', str(c.get('fadv_action_reason') or 'action required'))
 
         print(f'  [{cid}] {first} {last} ({client}) -> T{tpl_id} Day {reminder_count + 1} -> {phone}')
 
