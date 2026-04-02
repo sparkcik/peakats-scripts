@@ -604,6 +604,93 @@ def _daily_scheduler():
 
 # ── Main ────────────────────────────────────────────────────────────────────────
 
+# ── OUTBOUND CALL ──────────────────────────────────────────────────────────────
+@app.route("/twilio/call", methods=["POST"])
+def twilio_outbound_call():
+    data = request.json or {}
+    to = data.get("to", "")
+    if not to:
+        return jsonify({"error": "to is required"}), 400
+    digits = re.sub(r"\D", "", to)
+    if len(digits) == 10:
+        digits = "1" + digits
+    to_e164 = "+" + digits
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = http_requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json",
+            auth=(account_sid, auth_token),
+            data={
+                "To":    "+14043862799",
+                "From":  TWILIO_FROM_NUMBER,
+                "Twiml": "<Response><Dial timeout='30'><Number>" + to_e164 + "</Number></Dial></Response>"
+            }
+        )
+        body = r.json()
+        log.info(f"[twilio/call] {to_e164} -> {body.get('sid','')}")
+        if r.status_code >= 400:
+            return jsonify({"error": body.get("message", "call failed")}), 500
+        return jsonify({"status": body.get("status"), "sid": body.get("sid")})
+    except Exception as e:
+        log.error(f"[twilio/call] Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ── OUTBOUND SMS ───────────────────────────────────────────────────────────────
+@app.route("/twilio/send", methods=["POST"])
+def twilio_send_sms():
+    data = request.json or {}
+    to        = data.get("to", "")
+    body_text = data.get("body", "")
+    media_b64 = data.get("mediaBase64")
+    media_type = data.get("mediaType")
+    if not to or not body_text:
+        return jsonify({"error": "to and body required"}), 400
+    digits = re.sub(r"\D", "", to)
+    if len(digits) == 10:
+        digits = "1" + digits
+    to_e164 = "+" + digits
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        payload = {"To": to_e164, "From": TWILIO_FROM_NUMBER, "Body": body_text}
+        r = http_requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+            auth=(account_sid, auth_token),
+            data=payload
+        )
+        body_resp = r.json()
+        log.info(f"[twilio/send] {to_e164} -> {body_resp.get('sid','')}")
+        if r.status_code >= 400:
+            return jsonify({"error": body_resp.get("message", "send failed")}), 500
+        # Log to candidate_comms
+        candidate = _match_candidate(to)
+        now = datetime.now(timezone.utc).isoformat()
+        http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/candidate_comms",
+            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+            json={
+                "candidate_id":    candidate["id"] if candidate else None,
+                "client_id":       candidate["client_id"] if candidate else None,
+                "channel":         "sms",
+                "direction":       "outbound",
+                "body":            body_text,
+                "sent_at":         now,
+                "sent_by":         "pwa_compose",
+                "send_mode":       "manual",
+                "from_number":     _clean_phone(TWILIO_FROM_NUMBER),
+                "to_number":       _clean_phone(to),
+                "delivery_status": "sent",
+                "external_message_id": body_resp.get("sid", ""),
+            },
+        )
+        return jsonify({"status": body_resp.get("status"), "sid": body_resp.get("sid")})
+    except Exception as e:
+        log.error(f"[twilio/send] Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("forge-runner v1.3.0 starting")
