@@ -201,13 +201,6 @@ log = logging.getLogger("forge-runner")
 
 app = Flask(__name__)
 
-import traceback
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    log.error(f"Unhandled exception: {traceback.format_exc()}")
-    return jsonify({"error": str(e), "trace": traceback.format_exc()[-500:]}), 500
-
 
 
 def authenticate(req):
