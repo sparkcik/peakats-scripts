@@ -17,6 +17,7 @@ Managed by launchd (com.crucible.forge-runner.plist)
 """
 
 import os
+import base64
 import subprocess
 import logging
 import json
@@ -701,6 +702,31 @@ def twilio_send_sms():
     auth_token  = os.environ.get("TWILIO_AUTH_TOKEN", "")
     try:
         payload = {"To": to_e164, "From": TWILIO_FROM_NUMBER, "Body": body_text}
+        # Handle MMS image upload
+        if media_b64 and media_type:
+            try:
+                img_bytes = base64.b64decode(media_b64)
+                ext = media_type.split("/")[-1] if "/" in media_type else "jpg"
+                import uuid as _uuid
+                fname = f"mms/{_uuid.uuid4().hex}.{ext}"
+                upload_resp = http_requests.post(
+                    f"{SUPABASE_URL}/storage/v1/object/mms-media/{fname}",
+                    headers={
+                        "apikey": SUPABASE_ANON_KEY,
+                        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                        "Content-Type": media_type,
+                        "x-upsert": "true"
+                    },
+                    data=img_bytes
+                )
+                if upload_resp.status_code in (200, 201):
+                    media_public_url = f"{SUPABASE_URL}/storage/v1/object/public/mms-media/{fname}"
+                    payload["MediaUrl0"] = media_public_url
+                    log.info(f"[twilio/send] MMS image uploaded: {media_public_url}")
+                else:
+                    log.warning(f"[twilio/send] MMS upload failed: {upload_resp.status_code}")
+            except Exception as img_e:
+                log.error(f"[twilio/send] MMS upload error: {img_e}")
         r = http_requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
             auth=(account_sid, auth_token),
