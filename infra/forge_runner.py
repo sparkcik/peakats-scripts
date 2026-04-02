@@ -412,7 +412,7 @@ def _match_candidate(phone):
 TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 TWIML_GREETING = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">You have reached Kai at PEAK recruiting. Please leave a message after the tone.</Say>
+    <Play>https://eyopvsmsvbgfuffscfom.supabase.co/storage/v1/object/public/voicemail/kai_voicemail.mp3</Play>
     <Record maxLength="120" action="/twilio/voice/recording" transcribe="false" />
     <Say voice="alice">We did not receive a recording. Goodbye.</Say>
 </Response>"""
