@@ -1,77 +1,84 @@
 /**
- * PEAKATS GCIC Gmail Parser
- * Processes two email types from the GCIC/Pending label:
- *   1. Adobe Sign "Signed and Filed" -- updates Supabase, uploads PDF to Drive,
- *      auto-sends to FADV, marks complete
- *   2. FADV SR# acknowledgment -- stores SR number, updates gcic_fadv_outcome
- *
- * Deploy: paste into Google Apps Script editor at script.google.com
- * Trigger: set time-driven trigger -> every 30 minutes
+ * PEAKATS GCIC Gmail Parser -- HARDENED v4 (standalone project)
+ * v4 fixes: accent normalization, name suffix stripping, double RE: prefix,
+ *           reversed Order ID format, writeSrNumber_ helper extracted.
  */
 
-// -- CONFIG (SUPABASE_URL, SUPABASE_KEY declared in Code.gs) --
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const SUPABASE_URL         = 'https://eyopvsmsvbgfuffscfom.supabase.co';
+const SUPABASE_KEY         = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
 const FADV_EMAIL           = 'casedocuments@fadv.com';
+const ALERT_EMAIL          = 'kai@peakrecruitingco.com';
 const CANDIDATE_DOCS_ROOT  = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
 const GCIC_LABEL_PENDING   = 'GCIC/Pending';
 const GCIC_LABEL_PROCESSED = 'GCIC/Processed';
+const GCIC_LABEL_FAILED    = 'GCIC/Failed';
 
-// -- MAIN ENTRY POINT ---------------------------------------------------------
+// ── MAIN ENTRY POINT ─────────────────────────────────────────────────────────
 function processGcicEmails() {
   const pendingLabel = GmailApp.getUserLabelByName(GCIC_LABEL_PENDING);
-  if (!pendingLabel) {
-    Logger.log('Label not found: ' + GCIC_LABEL_PENDING + ' -- create it in Gmail first');
-    return;
-  }
+  if (!pendingLabel) { Logger.log('Label not found: ' + GCIC_LABEL_PENDING); return; }
 
   const processedLabel = getOrCreateLabel_(GCIC_LABEL_PROCESSED);
-  const threads = pendingLabel.getThreads(0, 50);
+  const failedLabel    = getOrCreateLabel_(GCIC_LABEL_FAILED);
+  const threads        = pendingLabel.getThreads(0, 50);
 
-  Logger.log('Found ' + threads.length + ' GCIC threads to process');
-
+  Logger.log('Found ' + threads.length + ' GCIC threads');
   let adobeOk = 0, fadvOk = 0, skipped = 0, errors = 0;
 
   threads.forEach(function(thread) {
     const messages = thread.getMessages();
-    let threadOk = true;
+    let threadOk   = true;
 
     messages.forEach(function(message) {
       try {
-        Logger.log('MSG from: [' + message.getFrom() + '] subject: [' + message.getSubject() + ']');
         const from = message.getFrom();
         const subj = message.getSubject();
+        Logger.log('MSG from: [' + from + '] subject: [' + subj + ']');
 
-        // Skip non-actionable Adobe Sign emails
         if (from.indexOf('adobesign@adobesign.com') !== -1) {
+          // Skip non-actionable Adobe Sign email types
           if (subj.indexOf('has been sent out for signature') !== -1 ||
-              (subj.indexOf('web form') !== -1 && subj.indexOf('has been created') !== -1) ||
-              subj.indexOf('You signed:') !== -1) {
-            skipped++;
-            return;
+             (subj.indexOf('web form') !== -1 && subj.indexOf('has been created') !== -1) ||
+              subj.indexOf('You signed:') !== -1 ||
+              subj.indexOf('Please confirm your signature') !== -1 ||
+              subj.indexOf('Agreement Exchange Canceled') !== -1 ||
+             (subj.indexOf('is Complete') !== -1 && subj.indexOf('Signed and Filed') === -1)) {
+            skipped++; return;
           }
-          if (handleAdobeSign_(message)) adobeOk++;
-          else skipped++;
+          const ok = handleAdobeSign_(message);
+          if (ok === true)        { adobeOk++; }
+          else if (ok === 'skip') { skipped++; }
+          else                    { errors++; threadOk = false; }
+
         } else if (from.indexOf('support-donotreply@fadv.com') !== -1) {
-          if (handleFadvSr_(message)) fadvOk++;
-          else skipped++;
+          const ok = handleFadvSr_(message);
+          if (ok === true)        { fadvOk++; }
+          else if (ok === 'skip') { skipped++; }
+          else                    { errors++; threadOk = false; }
+
         } else {
           skipped++;
         }
       } catch(e) {
-        Logger.log('ERROR processing GCIC message: ' + e.message);
+        Logger.log('EXCEPTION processing GCIC message: ' + e.message);
         errors++;
         threadOk = false;
       }
     });
 
+    thread.removeLabel(pendingLabel);
     if (threadOk) {
-      thread.removeLabel(pendingLabel);
       thread.addLabel(processedLabel);
       const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
       if (kaiInbox) thread.removeLabel(kaiInbox);
-      const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
-      if (peakInbox) thread.removeLabel(peakInbox);
       thread.markRead();
       thread.moveToArchive();
+    } else {
+      thread.addLabel(failedLabel);
+      Logger.log('Thread moved to GCIC/Failed: ' + thread.getFirstMessageSubject());
+      alertForge_('GCIC Parser failure', 'Thread moved to GCIC/Failed: ' + thread.getFirstMessageSubject() +
+        '\nCheck execution log and re-label to GCIC/Pending to retry.');
     }
   });
 
@@ -79,152 +86,209 @@ function processGcicEmails() {
              ' | Skipped: ' + skipped + ' | Errors: ' + errors);
 }
 
-// -- HANDLER: Adobe Sign "Signed and Filed" -----------------------------------
+// ── HANDLER: Adobe Sign "Signed and Filed" ────────────────────────────────────
+// Returns: true = success | 'skip' = intentionally skipped | false = error
 function handleAdobeSign_(message) {
   const subject = message.getSubject();
 
-  // Extract candidate name: "GCIC [Form] Acrobat eSig - SIGN ASAP between Kai M Clarke and {NAME} is Signed and Filed!"
   const nameMatch = subject.match(/\(?\s*between\s+Kai\s+M\s+Clarke\s+and\s+(.+?)\s*\)?\s+is Signed/i);
   if (!nameMatch) {
     Logger.log('Could not parse name from Adobe Sign subject: ' + subject);
-    return false;
+    return 'skip';
   }
   const fullName = nameMatch[1].trim().replace(/\)$/, '').trim();
 
-  // Find candidate by name
+  if (fullName.toLowerCase().indexOf('kai m clarke') !== -1 ||
+      fullName.toLowerCase().indexOf('kai m  clarke') !== -1) {
+    Logger.log('Skipping test document: ' + subject);
+    return 'skip';
+  }
+
   const candidate = findCandidateByName_(fullName);
   if (!candidate) {
-    Logger.log('No candidate match for Adobe Sign: ' + fullName);
-    return false;
+    Logger.log('No candidate match for Adobe Sign: ' + fullName + ' -- skipping, manual review needed');
+    alertForge_('GCIC no candidate match: ' + fullName,
+      'Adobe Sign GCIC signed but no candidate found in DB.\n' +
+      'Subject: ' + subject + '\nManual: find candidate, update gcic fields in Supabase.');
+    return 'skip';
   }
 
-  // IDEMPOTENCY GUARD -- never re-send to FADV if already sent
   if (candidate.gcic_email_sent === 1) {
     Logger.log('Already sent to FADV, skipping: ' + fullName);
-    return false;
+    return 'skip';
   }
 
-  // 1. Mark form completed
-  supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-    gcic_form_completed: 1,
-    gcic_form_completed_at: new Date().toISOString()
-  });
-
-  // 2. Get PDF attachment and upload to Drive
   const attachments = message.getAttachments();
   const pdf = findPdfAttachment_(attachments);
   if (!pdf) {
-    Logger.log('No PDF attachment found for: ' + fullName);
+    Logger.log('No PDF attachment for: ' + fullName);
+    alertForge_('GCIC missing PDF: ' + fullName,
+      'Adobe Sign email received for ' + fullName + ' but no PDF attached.\n' +
+      'Subject: ' + subject + '\nCandidate ID: ' + candidate.id +
+      '\nCheck Adobe Sign portal and reprocess manually.');
     return false;
   }
 
-  const dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  const lastName = candidate.last_name || '';
-  const firstName = candidate.first_name || '';
-  const pdfName = dateStr + '_' + lastName + firstName + '_GCIC.pdf';
-
+  const dateStr      = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const lastName     = candidate.last_name  || '';
+  const firstName    = candidate.first_name || '';
+  const pdfName      = dateStr + '_' + lastName + firstName + '_GCIC.pdf';
   const clientFolder = getOrCreateClientFolder_(candidate.client_id);
-  clientFolder.createFile(pdf.copyBlob().setName(pdfName));
 
-  supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-    gcic_uploaded: 1
-  });
+  try {
+    clientFolder.createFile(pdf.copyBlob().setName(pdfName));
+  } catch(e) {
+    Logger.log('Drive upload failed for ' + fullName + ': ' + e.message);
+    alertForge_('GCIC Drive upload failed: ' + fullName, 'Error: ' + e.message);
+    return false;
+  }
 
-  // 3. Auto-send to FADV
   const clientDisplay = formatClientName_(candidate.client_id);
-  const drugTestId = candidate.drug_test_id || 'N/A';
-
-  const emailSubject = firstName + ' ' + lastName + ' GCIC Form - ' + clientDisplay + ' - Order ID: ' + drugTestId;
-  const emailBody = 'Please find attached the executed GCIC authorization form for the above-referenced candidate. ' +
+  const drugTestId    = candidate.drug_test_id || 'N/A';
+  const emailSubject  = firstName + ' ' + lastName + ' GCIC Form - ' + clientDisplay + ' - Order ID: ' + drugTestId;
+  const emailBody     =
+    'Please find attached the executed GCIC authorization form for the above-referenced candidate. ' +
     'This document was electronically signed via Adobe Acrobat Sign and includes IP capture per GCIC requirements.\n\n' +
     'Candidate: ' + firstName + ' ' + lastName + '\n' +
     'Client: ' + clientDisplay + '\n' +
     'Drug Test Order ID: ' + drugTestId + '\n\n' +
     'Please confirm receipt.\n\n' +
-    'Kai Clarke\n' +
-    'PEAKrecruiting\n' +
-    'Questions? (470) 857-4325';
+    'Kai Clarke\nPEAKrecruiting';
 
-  GmailApp.sendEmail(FADV_EMAIL, emailSubject, emailBody, {
-    attachments: [pdf.copyBlob().setName(pdfName)]
-  });
+  try {
+    GmailApp.sendEmail(FADV_EMAIL, emailSubject, emailBody, {
+      attachments: [pdf.copyBlob().setName(pdfName)]
+    });
+  } catch(e) {
+    Logger.log('FADV email send failed for ' + fullName + ': ' + e.message);
+    alertForge_('GCIC FADV send failed: ' + fullName,
+      'Error: ' + e.message + '\nPDF uploaded to Drive. Send manually to ' + FADV_EMAIL);
+    return false;
+  }
 
-  supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-    gcic_email_sent: 1
-  });
+  var orderIdMatch = subject.match(/Order ID:\s*([0-9]+)/i);
+  var orderId = orderIdMatch ? orderIdMatch[1].trim() : null;
 
-  Logger.log('Adobe Sign processed: ' + fullName + ' -> uploaded + emailed FADV');
+  var finalPatch = {
+    gcic_form_completed:       1,
+    gcic_form_completed_at:    new Date().toISOString(),
+    gcic_uploaded:             1,
+    gcic_email_sent:           1,
+    gcic_stage:                'SUBMITTED_TO_FADV',
+    gcic_status:               'COMPLETE',
+    gcic_submitted_to_fadv_at: new Date().toISOString(),
+    updated_at:                new Date().toISOString()
+  };
+  if (orderId) finalPatch.gcic_fadv_order_id = orderId;
+
+  const code = supabasePatch_('candidates', 'id=eq.' + candidate.id, finalPatch);
+  if (code !== 200 && code !== 204) {
+    Logger.log('DB patch failed (' + code + ') for ' + fullName + ' after FADV send');
+    alertForge_('GCIC DB write failed after FADV send: ' + fullName,
+      'FADV email WAS sent. Drive upload complete. DB patch failed (' + code + ').\n' +
+      'Manual fix: update candidate ID ' + candidate.id + ' in Supabase:\n' +
+      'gcic_form_completed=1, gcic_uploaded=1, gcic_email_sent=1, gcic_stage=SUBMITTED_TO_FADV');
+    return false;
+  }
+
+  Logger.log('Adobe Sign fully processed: ' + fullName + ' -- Drive + FADV + DB confirmed');
   return true;
 }
 
-// -- HANDLER: FADV SR# acknowledgment -----------------------------------------
+// ── HANDLER: FADV SR# acknowledgment ─────────────────────────────────────────
+// Returns: true = success | 'skip' = intentionally skipped | false = error
 function handleFadvSr_(message) {
   const subject = message.getSubject();
 
-  // Pattern: "RE: {FIRST LAST} GCIC Form - {CLIENT} - Order ID: {ORDER_ID} SR#:{SR_NUM}."
-  const srMatch = subject.match(/RE:\s*(.+?)\s+GCIC Form\s*-\s*.+?-\s*Order ID:\s*(\S+)\s+SR#:(\S+)/i);
+  // Strip double RE: Re: prefixes before parsing
+  const cleanSubject = subject.replace(/^(RE:\s*)+(Re:\s*)*/i, 'RE: ');
+
+  // Standard format: RE: [NAME] GCIC - Order ID: [ID] SR#:[SR]
+  const srMatch = cleanSubject.match(/RE:\s*(.+?)\s+GCIC(?:[^S]*?Order ID:\s*(\S+))?\s+SR#:(\S+)/i);
+
   if (!srMatch) {
+    // Reversed format: RE: Order ID: [ID] - GCIC form SR#:[SR]
+    const altMatch = cleanSubject.match(/RE:\s*Order ID:\s*(\S+)\s*-\s*GCIC[^S]*SR#:(\S+)/i);
+    if (altMatch) {
+      const orderId  = altMatch[1].replace(/\.$/, '');
+      const srNumber = altMatch[2].replace(/\.$/, '');
+      const candidate = findCandidateByDrugTestId_(orderId);
+      if (!candidate) {
+        Logger.log('No candidate match for reversed-format SR: Order ' + orderId);
+        return false;
+      }
+      return writeSrNumber_(candidate, srNumber, orderId);
+    }
     Logger.log('Could not parse FADV SR subject: ' + subject);
     return false;
   }
 
-  const fullName  = srMatch[1].trim();
-  const orderId   = srMatch[2].trim().replace(/\.$/, '');
-  const srNumber  = srMatch[3].trim().replace(/\.$/, '');
+  const fullName = srMatch[1].trim();
+  const orderId  = (srMatch[2] || '').replace(/\.$/, '').trim();
+  const srNumber = srMatch[3].replace(/\.$/, '').trim();
 
-  // Try drug_test_id match first, then name fallback
-  var candidate = findCandidateByDrugTestId_(orderId);
+  // Normalize: strip name suffixes and accents before lookup
+  const normalizedName = fullName
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv)\b/gi, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  var candidate = orderId ? findCandidateByDrugTestId_(orderId) : null;
+  if (!candidate) candidate = findCandidateByName_(normalizedName);
+  if (!candidate && normalizedName !== fullName) candidate = findCandidateByName_(fullName);
   if (!candidate) {
-    candidate = findCandidateByName_(fullName);
-  }
-  if (!candidate) {
-    Logger.log('No candidate match for FADV SR: ' + fullName + ' / Order ID: ' + orderId);
+    Logger.log('No candidate match for FADV SR: ' + fullName + ' / Order: ' + orderId);
     return false;
   }
 
-  // IDEMPOTENCY GUARD -- skip if SR# already recorded
+  return writeSrNumber_(candidate, srNumber, orderId);
+}
+
+// ── WRITE SR# TO CANDIDATE ────────────────────────────────────────────────────
+function writeSrNumber_(candidate, srNumber, orderId) {
   if (candidate.gcic_sr_number === srNumber) {
-    Logger.log('SR# already recorded, skipping: ' + fullName + ' SR#: ' + srNumber);
-    return false;
+    Logger.log('SR# already recorded, skipping: ' + candidate.first_name + ' ' + candidate.last_name);
+    return 'skip';
   }
 
-  // Update outcome + SR number
   const patch = {
-    gcic_fadv_outcome: 'Received',
-    gcic_sr_number: srNumber
+    gcic_fadv_outcome:   'Received',
+    gcic_sr_number:      srNumber,
+    gcic_fadv_sr_number: srNumber,
+    gcic_stage:          'SUBMITTED_TO_FADV',
+    gcic_status:         'COMPLETE',
+    updated_at:          new Date().toISOString()
   };
 
-  // Only set submitted timestamp if not already set
-  if (!candidate.gcic_submitted_to_fadv_at) {
-    patch.gcic_submitted_to_fadv_at = new Date().toISOString();
-  }
+  if (!candidate.gcic_submitted_to_fadv_at) patch.gcic_submitted_to_fadv_at = new Date().toISOString();
+  if (orderId) patch.gcic_fadv_order_id = orderId;
 
-  // Append SR# to fadv_notes
   const existingNotes = candidate.fadv_notes || '';
   if (existingNotes.indexOf('GCIC SR#') === -1) {
-    patch.fadv_notes = existingNotes
-      ? existingNotes + '\nGCIC SR#: ' + srNumber
-      : 'GCIC SR#: ' + srNumber;
+    patch.fadv_notes = existingNotes ? existingNotes + '\nGCIC SR#: ' + srNumber : 'GCIC SR#: ' + srNumber;
   }
 
-  supabasePatch_('candidates', 'id=eq.' + candidate.id, patch);
+  const code = supabasePatch_('candidates', 'id=eq.' + candidate.id, patch);
+  if (code !== 200 && code !== 204) {
+    Logger.log('SR# patch failed (' + code + ') for candidate ' + candidate.id);
+    alertForge_('GCIC SR# write failed: ' + candidate.first_name + ' ' + candidate.last_name,
+      'SR# ' + srNumber + ' not written to DB. Manual fix needed for candidate ID ' + candidate.id);
+    return false;
+  }
 
-  Logger.log('FADV SR processed: ' + fullName + ' -> SR#: ' + srNumber);
+  Logger.log('FADV SR processed: ' + candidate.first_name + ' ' + candidate.last_name + ' SR#: ' + srNumber);
   return true;
 }
 
-// -- CANDIDATE LOOKUP ---------------------------------------------------------
+// ── CANDIDATE LOOKUPS ─────────────────────────────────────────────────────────
 function findCandidateByName_(fullName) {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length < 2) return null;
-
-  const firstName = parts[0];
-  const lastName  = parts.slice(1).join(' ');
-
   const res = supabaseGet_('candidates', {
     select: 'id,first_name,last_name,drug_test_id,client_id,gcic_form_completed,gcic_uploaded,gcic_email_sent,gcic_submitted_to_fadv_at,gcic_sr_number,fadv_notes',
-    'first_name': 'ilike.' + firstName,
-    'last_name':  'ilike.' + lastName,
+    'first_name': 'ilike.' + parts[0],
+    'last_name':  'ilike.' + parts.slice(1).join(' '),
     limit: 1
   });
   return (res && res.length > 0) ? res[0] : null;
@@ -232,7 +296,6 @@ function findCandidateByName_(fullName) {
 
 function findCandidateByDrugTestId_(drugTestId) {
   if (!drugTestId) return null;
-
   const res = supabaseGet_('candidates', {
     select: 'id,first_name,last_name,drug_test_id,client_id,gcic_form_completed,gcic_uploaded,gcic_email_sent,gcic_submitted_to_fadv_at,gcic_sr_number,fadv_notes',
     'drug_test_id': 'eq.' + drugTestId,
@@ -241,175 +304,157 @@ function findCandidateByDrugTestId_(drugTestId) {
   return (res && res.length > 0) ? res[0] : null;
 }
 
-// -- DRIVE HELPERS ------------------------------------------------------------
+// ── DRIVE HELPERS ─────────────────────────────────────────────────────────────
 function getOrCreateClientFolder_(clientId) {
-  const root = DriveApp.getFolderById(CANDIDATE_DOCS_ROOT);
+  const root    = DriveApp.getFolderById(CANDIDATE_DOCS_ROOT);
   const folders = root.getFoldersByName(clientId);
-  if (folders.hasNext()) return folders.next();
-  return root.createFolder(clientId);
+  return folders.hasNext() ? folders.next() : root.createFolder(clientId);
 }
 
 function findPdfAttachment_(attachments) {
   for (var i = 0; i < attachments.length; i++) {
-    if (attachments[i].getContentType() === 'application/pdf') {
-      return attachments[i];
-    }
+    if (attachments[i].getContentType() === 'application/pdf') return attachments[i];
   }
   return null;
 }
 
-// -- DISPLAY HELPERS ----------------------------------------------------------
 function formatClientName_(clientId) {
   if (!clientId) return 'Unknown';
-  return clientId.split('_').map(function(word) {
-    return word.charAt(0).toUpperCase() + word.slice(1);
+  return clientId.split('_').map(function(w) {
+    return w.charAt(0).toUpperCase() + w.slice(1);
   }).join(' ');
 }
 
-// -- SUPABASE HELPERS ---------------------------------------------------------
+// ── ALERT HELPER ──────────────────────────────────────────────────────────────
+function alertForge_(subject, body) {
+  try {
+    GmailApp.sendEmail(ALERT_EMAIL, '[PEAK ALERT] ' + subject, body);
+    Logger.log('Alert sent: ' + subject);
+  } catch(e) {
+    Logger.log('Alert send failed: ' + e.message);
+  }
+}
+
+// ── SUPABASE HELPERS ──────────────────────────────────────────────────────────
 function supabaseGet_(table, params) {
-  const qs = Object.entries(params).map(function(entry) {
-    return entry[0] + '=' + encodeURIComponent(entry[1]);
+  const qs = Object.entries(params).map(function(e) {
+    return e[0] + '=' + encodeURIComponent(e[1]);
   }).join('&');
-  const url = SUPABASE_URL + '/rest/v1/' + table + '?' + qs;
-  const res = UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + qs, {
     method: 'GET',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
     muteHttpExceptions: true
   });
-  if (res.getResponseCode() !== 200) return null;
+  if (res.getResponseCode() !== 200) {
+    Logger.log('supabaseGet_ failed (' + res.getResponseCode() + '): ' + res.getContentText().substring(0, 200));
+    return null;
+  }
   return JSON.parse(res.getContentText());
 }
 
 function supabasePatch_(table, filter, payload) {
-  const url = SUPABASE_URL + '/rest/v1/' + table + '?' + filter;
-  UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + filter, {
     method: 'PATCH',
     headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal'
+      'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json', 'Prefer': 'return=minimal'
     },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
+  const code = res.getResponseCode();
+  if (code !== 200 && code !== 204) {
+    Logger.log('supabasePatch_ error (' + code + '): ' + res.getContentText().substring(0, 300));
+  }
+  return code;
 }
 
 function supabasePost_(table, payload) {
-  const url = SUPABASE_URL + '/rest/v1/' + table;
-  UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table, {
     method: 'POST',
     headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal'
+      'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json', 'Prefer': 'return=minimal'
     },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
+  return res.getResponseCode();
 }
 
-// -- LABEL HELPER -------------------------------------------------------------
-function getOrCreateLabel_(labelName) {
-  var label = GmailApp.getUserLabelByName(labelName);
-  if (!label) label = GmailApp.createLabel(labelName);
-  return label;
+// ── LABEL HELPER ──────────────────────────────────────────────────────────────
+function getOrCreateLabel_(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
 }
 
-// -- PROCESS SPECIFIC THREADS (one-time manual run) ---------------------------
+// ── RETRY FAILED THREADS ──────────────────────────────────────────────────────
+function retryFailed() {
+  const failedLabel  = getOrCreateLabel_(GCIC_LABEL_FAILED);
+  const pendingLabel = getOrCreateLabel_(GCIC_LABEL_PENDING);
+  const threads = failedLabel.getThreads(0, 50);
+  Logger.log('Retrying ' + threads.length + ' failed GCIC threads');
+  threads.forEach(function(t) {
+    t.removeLabel(failedLabel);
+    t.addLabel(pendingLabel);
+  });
+  if (threads.length > 0) processGcicEmails();
+}
+
+// ── BACKLOG UTILS ─────────────────────────────────────────────────────────────
+function labelGcicBacklog() {
+  const pendingLabel = getOrCreateLabel_(GCIC_LABEL_PENDING);
+  [
+    'from:adobesign@adobesign.com subject:"GCIC" subject:"Signed and Filed" -label:GCIC/Pending -label:GCIC/Processed',
+    'from:support-donotreply@fadv.com subject:"GCIC" subject:"SR#" -label:GCIC/Pending -label:GCIC/Processed'
+  ].forEach(function(query) {
+    const threads = GmailApp.search(query);
+    Logger.log('Backlog [' + query.substring(0, 60) + ']: ' + threads.length + ' threads');
+    threads.forEach(function(t) { t.addLabel(pendingLabel); });
+  });
+  Logger.log('GCIC backlog labeling complete');
+}
+
 function processSpecificThreads() {
   const threadIds = [
-    '19d07946cf7cd597',  // Derek Taplet
-    '19d07656f54a9bb5',  // Kai M Clarke (test - skip)
-    '19cfce83984ab366',  // Wayne Rucker
-    '19cfb6894864d8b4',  // Marvin Bagwell
-    '19cf360dd155a5e2',  // Michael Cobb
-    '19cf3553f7187f54'   // Jakireya Norman
+    '19d07946cf7cd597',
+    '19cfce83984ab366',
+    '19cfb6894864d8b4',
+    '19cf360dd155a5e2',
+    '19cf3553f7187f54'
   ];
-
   const processedLabel = getOrCreateLabel_(GCIC_LABEL_PROCESSED);
-  const pendingLabel = GmailApp.getUserLabelByName(GCIC_LABEL_PENDING);
-
-  var adobeOk = 0, skipped = 0, errors = 0;
+  const failedLabel    = getOrCreateLabel_(GCIC_LABEL_FAILED);
+  let adobeOk = 0, skipped = 0, errors = 0;
 
   threadIds.forEach(function(threadId) {
     try {
-      var thread = GmailApp.getThreadById(threadId);
+      const thread = GmailApp.getThreadById(threadId);
       if (!thread) { Logger.log('Thread not found: ' + threadId); return; }
+      let threadOk = true;
 
-      var messages = thread.getMessages();
-
-      messages.forEach(function(message) {
-        Logger.log('Processing: [' + message.getFrom() + '] ' + message.getSubject());
-        var from = message.getFrom();
-        var subj = message.getSubject();
-
-        // Skip "Kai M Clarke and Kai M Clarke" (test document)
-        if (subj.indexOf('Kai M  Clarke and Kai M  Clarke') !== -1 ||
-            subj.indexOf('Kai M Clarke and Kai M Clarke') !== -1) {
-          Logger.log('Skipping test document: ' + subj);
-          skipped++;
-          return;
-        }
-
-        if (from.indexOf('adobesign@adobesign.com') !== -1 &&
-            subj.indexOf('is Signed and Filed') !== -1) {
-          if (handleAdobeSign_(message)) adobeOk++;
-          else { Logger.log('handleAdobeSign_ returned false'); skipped++; }
+      thread.getMessages().forEach(function(message) {
+        const from = message.getFrom();
+        const subj = message.getSubject();
+        Logger.log('Processing: [' + from + '] ' + subj);
+        if (from.indexOf('adobesign@adobesign.com') !== -1 && subj.indexOf('is Signed and Filed') !== -1) {
+          const ok = handleAdobeSign_(message);
+          if (ok === true)        { adobeOk++; }
+          else if (ok === 'skip') { skipped++; }
+          else                    { errors++; threadOk = false; }
         } else {
           skipped++;
         }
       });
 
-      // Force remove GCIC/Pending by name lookup
-      var gcicPending = GmailApp.getUserLabelByName('GCIC/Pending');
-      var gcicProcessed = getOrCreateLabel_('GCIC/Processed');
-      if (gcicPending) {
-        try { thread.removeLabel(gcicPending); } catch(e) { Logger.log('removeLabel error: ' + e.message); }
-      }
-      try { thread.addLabel(gcicProcessed); } catch(e) { Logger.log('addLabel error: ' + e.message); }
-      var kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
-      if (kaiInbox) { try { thread.removeLabel(kaiInbox); } catch(e) {} }
+      const gcicPending = GmailApp.getUserLabelByName(GCIC_LABEL_PENDING);
+      if (gcicPending) { try { thread.removeLabel(gcicPending); } catch(e) {} }
+      thread.addLabel(threadOk ? processedLabel : failedLabel);
       thread.markRead();
-      Logger.log('Labels updated for thread: ' + threadId);
-
     } catch(e) {
       Logger.log('ERROR on thread ' + threadId + ': ' + e.message);
       errors++;
     }
   });
 
-  Logger.log('Specific threads complete -- Adobe: ' + adobeOk + ' | Skipped: ' + skipped + ' | Errors: ' + errors);
-}
-
-// -- ONE-TIME BACKLOG LABELER -------------------------------------------------
-// Run ONCE manually to catch existing Adobe Sign + FADV SR emails
-function labelGcicBacklog() {
-  const pendingLabel = getOrCreateLabel_(GCIC_LABEL_PENDING);
-
-  // Adobe Sign signed-and-filed emails
-  const adobeThreads = GmailApp.search(
-    'from:adobesign@adobesign.com subject:"GCIC Form" subject:"Signed and Filed" -label:GCIC/Pending -label:GCIC/Processed'
-  );
-  Logger.log('Adobe Sign backlog threads: ' + adobeThreads.length);
-  adobeThreads.forEach(function(thread) {
-    thread.addLabel(pendingLabel);
-  });
-
-  // FADV SR# acknowledgment emails
-  const fadvThreads = GmailApp.search(
-    'from:support-donotreply@fadv.com subject:"GCIC Form" subject:"SR#" -label:GCIC/Pending -label:GCIC/Processed'
-  );
-  Logger.log('FADV SR backlog threads: ' + fadvThreads.length);
-  fadvThreads.forEach(function(thread) {
-    thread.addLabel(pendingLabel);
-  });
-
-  Logger.log('GCIC backlog labeling complete');
+  Logger.log('Specific threads -- Adobe: ' + adobeOk + ' | Skipped: ' + skipped + ' | Errors: ' + errors);
 }
