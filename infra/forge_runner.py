@@ -620,7 +620,7 @@ def twilio_outbound_call():
     to = data.get("to", "")
     if not to:
         return jsonify({"error": "to is required"}), 400
-    digits = re.sub(r"\D", "", to)
+    digits = "".join(c for c in to if c.isdigit())
     if len(digits) == 10:
         digits = "1" + digits
     to_e164 = "+" + digits
@@ -656,7 +656,7 @@ def twilio_send_sms():
     media_type = data.get("mediaType")
     if not to or not body_text:
         return jsonify({"error": "to and body required"}), 400
-    digits = re.sub(r"\D", "", to)
+    digits = "".join(c for c in to if c.isdigit())
     if len(digits) == 10:
         digits = "1" + digits
     to_e164 = "+" + digits
