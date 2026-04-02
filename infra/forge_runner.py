@@ -556,13 +556,6 @@ def twilio_voice_missed():
     return Response(TWIML_GREETING, mimetype="application/xml")
 
 
-# Start schedulers regardless of how app is launched (gunicorn or direct)
-_scheduler_thread = threading.Thread(target=_sms_scheduler, daemon=True)
-_scheduler_thread.start()
-_daily_thread = threading.Thread(target=_daily_scheduler, daemon=True)
-_daily_thread.start()
-log.info("Schedulers started")
-
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("forge-runner v1.3.0 starting")
@@ -573,6 +566,12 @@ if __name__ == "__main__":
     log.info("Scheduler:   sms_queue_poller every 15 min")
     log.info("Scheduler:   daily reminders at 08:00 UTC, gcic_outreach every 30 min")
     log.info("=" * 60)
+
+    scheduler = threading.Thread(target=_sms_scheduler, daemon=True)
+    scheduler.start()
+
+    daily = threading.Thread(target=_daily_scheduler, daemon=True)
+    daily.start()
 
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)
