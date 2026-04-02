@@ -507,7 +507,7 @@ def twilio_inbound_voice():
     )
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial callerId="{caller_id}" timeout="20" action="/twilio/voice/missed">
+    <Dial callerId="{caller_id}" timeout="12" action="/twilio/voice/missed">
         <Number url="{whisper_url}">+14043862799</Number>
     </Dial>
 </Response>"""
