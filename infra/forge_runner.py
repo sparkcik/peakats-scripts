@@ -517,283 +517,37 @@ def twilio_inbound_voice():
 @app.route("/twilio/voice/recording", methods=["POST"])
 def twilio_voice_recording():
     from_number = request.form.get("From", "")
+    call_sid = request.form.get("CallSid", "")
     recording_url = request.form.get("RecordingUrl", "")
-    recording_duration = request.form.get("RecordingDuration", "0")
+    recording_sid = request.form.get("RecordingSid", "")
+    recording_duration = int(request.form.get("RecordingDuration", "0"))
     log.info(f"[twilio] Recording from {from_number}: {recording_url} ({recording_duration}s)")
     candidate = _match_candidate(from_number)
+    now = datetime.now(timezone.utc).isoformat()
+    clean_from = _clean_phone(from_number)
+    candidate_name = None
     if candidate:
-        now = datetime.now(timezone.utc).isoformat()
-        http_requests.post(
-            f"{SUPABASE_URL}/rest/v1/candidate_comms",
-            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
-            json={
-                "candidate_id": candidate["id"],
-                "client_id": candidate["client_id"],
-                "channel": "voice",
-                "direction": "inbound",
-                "body": f"Voicemail ({recording_duration}s): {recording_url}",
-                "sent_at": now,
-                "sent_by": "twilio_voice",
-                "send_mode": "automated",
-                "from_number": _clean_phone(from_number),
-                "to_number": _clean_phone(TWILIO_FROM_NUMBER),
-                "delivery_status": "delivered",
-            },
-        )
-        log.info(f"[twilio] Logged voicemail -> candidate {candidate['id']}")
-    else:
-        log.warning(f"[twilio] No candidate match for voicemail from {from_number}")
+        candidate_name = f"{candidate.get('first_name','')} {candidate.get('last_name','')}".strip()
+
+    # Write to twilio_voicemail -- this is what the PWA reads
+    http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/twilio_voicemail",
+        headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+        json={
+            "call_sid": call_sid,
+            "recording_sid": recording_sid,
+            "recording_url": recording_url + ".mp3",
+            "from_number": clean_from,
+            "to_number": _clean_phone(TWILIO_FROM_NUMBER),
+            "duration_seconds": recording_duration,
+            "candidate_id": candidate["id"] if candidate else None,
+            "candidate_name": candidate_name,
+            "listened": False,
+            "created_at": now,
+        },
+    )
+    log.info(f"[twilio] Voicemail saved to twilio_voicemail from {from_number}")
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
-
-
-@app.route('/voicemail', methods=['POST'])
-def voicemail_webhook():
-    import requests as req
-    from_num = request.form.get('From','').replace('+1','')[-10:]
-    call_sid = request.form.get('CallSid','')
-    rec_url  = request.form.get('RecordingUrl','')
-    duration = int(request.form.get('RecordingDuration',0) or 0)
-    transcript = request.form.get('TranscriptionText','')
-    SB_URL = os.environ['SUPABASE_URL']
-    SB_KEY = os.environ['SUPABASE_KEY']
-    SB = {'apikey':SB_KEY,'Authorization':f'Bearer {SB_KEY}','Content-Type':'application/json','Prefer':'return=minimal'}
-    r = req.get(f'{SB_URL}/rest/v1/candidates?select=id,first_name,last_name&phone=eq.{from_num}', headers=SB)
-    cands = r.json() if r.ok else []
-    req.post(f'{SB_URL}/rest/v1/twilio_voicemail', headers=SB, json={
-        'call_sid': call_sid,
-        'recording_url': rec_url + '.mp3' if rec_url else None,
-        'from_number': from_num,
-        'duration_seconds': duration,
-        'transcript': transcript,
-        'candidate_id': cands[0]['id'] if cands else None,
-        'candidate_name': f"{cands[0]['first_name']} {cands[0]['last_name']}" if cands else None,
-    })
-    return Response('<?xml version="1.0"?><Response></Response>', mimetype='text/xml')
-
-
-@app.route('/token', methods=['GET', 'POST'])
-def twilio_token():
-    from twilio.jwt.client import ClientCapabilityToken
-    account_sid = os.environ.get('TWILIO_ACCOUNT_SID','')
-    auth_token = os.environ.get('TWILIO_AUTH_TOKEN','')
-    capability = ClientCapabilityToken(account_sid, auth_token)
-    capability.allow_client_outgoing(os.environ.get('TWILIO_TWIML_APP_SID',''))
-    capability.allow_client_incoming('kai')
-    token = capability.to_jwt()
-    from flask import jsonify
-    return jsonify({'token': token.decode('utf-8') if isinstance(token, bytes) else token})
-
-
-@app.route('/voicemail/audio', methods=['GET'])
-def voicemail_audio():
-    import requests as req
-    from flask import Response, request as freq
-    recording_url = freq.args.get('url','')
-    if not recording_url or 'twilio.com' not in recording_url:
-        return Response('Invalid URL', status=400)
-    r = req.get(recording_url, auth=(os.environ.get('TWILIO_ACCOUNT_SID',''), os.environ.get('TWILIO_AUTH_TOKEN','')), stream=True)
-    return Response(r.content, mimetype='audio/mpeg')
-
-
-@app.route("/twilio/status", methods=["POST"])
-def twilio_status_callback():
-    message_sid = request.form.get("MessageSid", "")
-    message_status = request.form.get("MessageStatus", "")
-    log.info(f"[twilio] Status callback: SID={message_sid} status={message_status}")
-    if message_sid and SUPABASE_URL:
-        now = datetime.now(timezone.utc).isoformat()
-        http_requests.patch(
-            f"{SUPABASE_URL}/rest/v1/sms_send_queue?twilio_sid=eq.{message_sid}",
-            headers=_SB_HEADERS,
-            json={
-                "delivery_status": message_status,
-                "updated_at": now,
-            },
-        )
-    return Response(status=204)
-
-
-# ── Scheduler — SMS Queue Poller (every 15 minutes) ───────────────────────────
-
-def _sms_scheduler():
-    """Background thread: fires sms_queue_poller.py every 15 minutes."""
-    script = str(SCRIPTS_DIR / "sms_queue_poller.py")
-    while True:
-        try:
-            log.info("[scheduler] Triggering sms_queue_poller.py (15-min interval)")
-            result = subprocess.run(
-                ["python3", script],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                cwd=str(SCRIPTS_DIR),
-            )
-            log.info(f"[scheduler] sms_queue_poller exit={result.returncode}")
-            if result.stdout:
-                for line in result.stdout.strip().splitlines():
-                    log.info(f"[scheduler] {line}")
-            if result.stderr:
-                for line in result.stderr.strip().splitlines():
-                    log.warning(f"[scheduler] {line}")
-        except Exception as e:
-            log.error(f"[scheduler] sms_queue_poller error: {e}")
-        time.sleep(900)
-
-
-# ── Scheduler — Daily Reminders + GCIC Outreach ──────────────────────────────
-
-def _run_script(command):
-    """Execute a whitelisted script by command name."""
-    script_path = WHITELIST.get(command, {}).get("script")
-    if not script_path:
-        log.warning(f"[scheduler] Unknown command: {command}")
-        return
-    try:
-        log.info(f"[scheduler] Running {command}")
-        result = subprocess.run(
-            ["python3", script_path],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(SCRIPTS_DIR),
-        )
-        log.info(f"[scheduler] {command} exit={result.returncode}")
-        if result.stdout:
-            for line in result.stdout.strip().splitlines():
-                log.info(f"[scheduler] {line}")
-        if result.stderr:
-            for line in result.stderr.strip().splitlines():
-                log.warning(f"[scheduler] {line}")
-    except Exception as e:
-        log.error(f"[scheduler] {command} error: {e}")
-
-
-def _daily_scheduler():
-    """Background thread: fires daily reminder scripts at 8am UTC."""
-    schedule.every().day.at("08:00").do(_run_script, "gcic_reminder")
-    schedule.every().day.at("08:05").do(_run_script, "mec_dl_reminder")
-    schedule.every().day.at("08:10").do(_run_script, "drug_screen_reminder")
-    schedule.every().day.at("08:15").do(_run_script, "fadv_action_reminder")
-    schedule.every(30).minutes.do(_run_script, "gcic_outreach")
-    schedule.every(30).minutes.do(_run_script, "twilio_call_sync")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-
-# ── Main ────────────────────────────────────────────────────────────────────────
-
-# ── OUTBOUND CALL ──────────────────────────────────────────────────────────────
-@app.route("/twilio/call", methods=["POST"])
-def twilio_outbound_call():
-    data = request.json or {}
-    to = data.get("to", "")
-    if not to:
-        return jsonify({"error": "to is required"}), 400
-    digits = "".join(c for c in to if c.isdigit())
-    if len(digits) == 10:
-        digits = "1" + digits
-    to_e164 = "+" + digits
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    try:
-        r = http_requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json",
-            auth=(account_sid, auth_token),
-            data={
-                "To":    "+14043862799",
-                "From":  TWILIO_FROM_NUMBER,
-                "Twiml": "<Response><Dial timeout='30'><Number>" + to_e164 + "</Number></Dial></Response>"
-            }
-        )
-        body = r.json()
-        log.info(f"[twilio/call] {to_e164} -> {body.get('sid','')}")
-        if r.status_code >= 400:
-            return jsonify({"error": body.get("message", "call failed")}), 500
-        return jsonify({"status": body.get("status"), "sid": body.get("sid")})
-    except Exception as e:
-        log.error(f"[twilio/call] Exception: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-# ── OUTBOUND SMS ───────────────────────────────────────────────────────────────
-@app.route("/twilio/send", methods=["POST"])
-def twilio_send_sms():
-    data = request.json or {}
-    to        = data.get("to", "")
-    body_text = data.get("body", "")
-    media_b64 = data.get("mediaBase64")
-    media_type = data.get("mediaType")
-    if not to or not body_text:
-        return jsonify({"error": "to and body required"}), 400
-    digits = "".join(c for c in to if c.isdigit())
-    if len(digits) == 10:
-        digits = "1" + digits
-    to_e164 = "+" + digits
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    auth_token  = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    try:
-        payload = {"To": to_e164, "From": TWILIO_FROM_NUMBER, "Body": body_text}
-        # Handle MMS image upload
-        if media_b64 and media_type:
-            try:
-                img_bytes = base64.b64decode(media_b64)
-                ext = media_type.split("/")[-1] if "/" in media_type else "jpg"
-                import uuid as _uuid
-                fname = f"mms/{_uuid.uuid4().hex}.{ext}"
-                upload_resp = http_requests.post(
-                    f"{SUPABASE_URL}/storage/v1/object/mms-media/{fname}",
-                    headers={
-                        "apikey": SUPABASE_ANON_KEY,
-                        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-                        "Content-Type": media_type,
-                        "x-upsert": "true"
-                    },
-                    data=img_bytes
-                )
-                if upload_resp.status_code in (200, 201):
-                    media_public_url = f"{SUPABASE_URL}/storage/v1/object/public/mms-media/{fname}"
-                    payload["MediaUrl0"] = media_public_url
-                    log.info(f"[twilio/send] MMS image uploaded: {media_public_url}")
-                else:
-                    log.warning(f"[twilio/send] MMS upload failed: {upload_resp.status_code}")
-            except Exception as img_e:
-                log.error(f"[twilio/send] MMS upload error: {img_e}")
-        r = http_requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
-            auth=(account_sid, auth_token),
-            data=payload
-        )
-        body_resp = r.json()
-        log.info(f"[twilio/send] {to_e164} -> {body_resp.get('sid','')}")
-        if r.status_code >= 400:
-            return jsonify({"error": body_resp.get("message", "send failed")}), 500
-        # Log to candidate_comms
-        candidate = _match_candidate(to)
-        now = datetime.now(timezone.utc).isoformat()
-        http_requests.post(
-            f"{SUPABASE_URL}/rest/v1/candidate_comms",
-            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
-            json={
-                "candidate_id":    candidate["id"] if candidate else None,
-                "client_id":       candidate["client_id"] if candidate else None,
-                "channel":         "sms",
-                "direction":       "outbound",
-                "body":            body_text,
-                "sent_at":         now,
-                "sent_by":         "pwa_compose",
-                "send_mode":       "manual",
-                "from_number":     _clean_phone(TWILIO_FROM_NUMBER),
-                "to_number":       _clean_phone(to),
-                "delivery_status": "sent",
-                "external_message_id": body_resp.get("sid", ""),
-            },
-        )
-        return jsonify({"status": body_resp.get("status"), "sid": body_resp.get("sid")})
-    except Exception as e:
-        log.error(f"[twilio/send] Exception: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 @app.route("/twilio/voice/missed", methods=["POST"])
 def twilio_voice_missed():
