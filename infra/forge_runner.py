@@ -424,10 +424,32 @@ TWIML_RECORDING_ACK = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voic
 def twilio_inbound_sms():
     from_number = request.form.get("From", "")
     body = request.form.get("Body", "")
+    media_url = request.form.get("MediaUrl0", "")
+    message_sid = request.form.get("MessageSid", "")
     log.info(f"[twilio] Inbound SMS from {from_number}: {body[:80]}")
     candidate = _match_candidate(from_number)
+    now = datetime.now(timezone.utc).isoformat()
+    clean_from = _clean_phone(from_number)
+
+    # Always write to sms_triage_queue -- this is what the PWA reads
+    http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/sms_triage_queue",
+        headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+        json={
+            "from_number": clean_from,
+            "body": body,
+            "rc_message_id": f"twilio-{message_sid}",
+            "candidate_id": candidate["id"] if candidate else None,
+            "received_at": now,
+            "needs_reply": True,
+            "priority": "normal" if candidate else "unknown",
+            "category": "candidate" if candidate else "unmatched",
+            "media_url": media_url or None,
+        },
+    )
+
+    # Also log to candidate_comms if matched
     if candidate:
-        now = datetime.now(timezone.utc).isoformat()
         http_requests.post(
             f"{SUPABASE_URL}/rest/v1/candidate_comms",
             headers={**_SB_HEADERS, "Prefer": "return=minimal"},
@@ -440,14 +462,15 @@ def twilio_inbound_sms():
                 "sent_at": now,
                 "sent_by": "twilio_webhook",
                 "send_mode": "automated",
-                "from_number": _clean_phone(from_number),
+                "from_number": clean_from,
                 "to_number": _clean_phone(TWILIO_FROM_NUMBER),
                 "delivery_status": "delivered",
+                "external_message_id": message_sid,
             },
         )
         log.info(f"[twilio] Logged inbound SMS -> candidate {candidate['id']}")
     else:
-        log.warning(f"[twilio] No candidate match for {from_number}")
+        log.warning(f"[twilio] No candidate match for {from_number} -- logged to triage as unmatched")
     return Response(TWIML_EMPTY, mimetype="application/xml")
 
 
