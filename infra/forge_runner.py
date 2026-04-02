@@ -419,6 +419,70 @@ TWIML_GREETING = """<?xml version="1.0" encoding="UTF-8"?>
 TWIML_RECORDING_ACK = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>'
 
 
+
+@app.route("/twilio/call", methods=["POST", "OPTIONS"])
+def twilio_outbound_call():
+    if request.method == "OPTIONS":
+        return "", 200
+    data = request.json or {}
+    to = data.get("to", "")
+    if not to:
+        return jsonify({"error": "to is required"}), 400
+    digits = "".join(c for c in to if c.isdigit())
+    if len(digits) == 10:
+        digits = "1" + digits
+    to_e164 = "+" + digits
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = http_requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json",
+            auth=(account_sid, auth_token),
+            data={
+                "To": "+14043862799",
+                "From": TWILIO_FROM_NUMBER,
+                "Twiml": "<Response><Dial timeout='30'><Number>" + to_e164 + "</Number></Dial></Response>"
+            }
+        )
+        body = r.json()
+        log.info(f"[twilio/call] {to_e164} -> {body.get('sid','')}")
+        if r.status_code >= 400:
+            return jsonify({"error": body.get("message", "call failed")}), 500
+        return jsonify({"status": body.get("status"), "sid": body.get("sid")})
+    except Exception as e:
+        log.error(f"[twilio/call] Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/twilio/send", methods=["POST", "OPTIONS"])
+def twilio_send_sms():
+    if request.method == "OPTIONS":
+        return "", 200
+    data = request.json or {}
+    to = data.get("to", "")
+    body_text = data.get("body", "")
+    if not to:
+        return jsonify({"error": "to is required"}), 400
+    digits = "".join(c for c in to if c.isdigit())
+    if len(digits) == 10:
+        digits = "1" + digits
+    to_e164 = "+" + digits
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = http_requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+            auth=(account_sid, auth_token),
+            data={"To": to_e164, "From": TWILIO_FROM_NUMBER, "Body": body_text or " "}
+        )
+        body_resp = r.json()
+        if r.status_code >= 400:
+            return jsonify({"error": body_resp.get("message", "send failed")}), 500
+        return jsonify({"status": body_resp.get("status"), "sid": body_resp.get("sid")})
+    except Exception as e:
+        log.error(f"[twilio/send] Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/twilio/sms", methods=["POST"])
 def twilio_inbound_sms():
     from_number = request.form.get("From", "")
