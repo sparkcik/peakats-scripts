@@ -795,6 +795,13 @@ def twilio_send_sms():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/twilio/voice/missed", methods=["POST"])
+def twilio_voice_missed():
+    """Fires when the forward to Charles's cell times out -- play Kai voicemail."""
+    log.info("[twilio] Call missed -- playing Kai voicemail")
+    return Response(TWIML_GREETING, mimetype="application/xml")
+
+
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("forge-runner v1.3.0 starting")
