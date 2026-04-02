@@ -203,6 +203,14 @@ app = Flask(__name__)
 
 
 
+
+import traceback as _tb
+
+@app.errorhandler(Exception)
+def _handle_exception(e):
+    log.error(f"Unhandled: {_tb.format_exc()}")
+    return jsonify({"error": str(e), "trace": _tb.format_exc()[-800:]}), 500
+
 def authenticate(req):
     """Validate X-Forge-Key header."""
     return req.headers.get("X-Forge-Key") == AUTH_KEY
