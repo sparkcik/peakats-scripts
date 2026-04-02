@@ -3,11 +3,6 @@ name: Deploy forge_runner to Fly.io
 on:
   push:
     branches: [main]
-    paths:
-      - 'infra/**'
-      - 'Dockerfile'
-      - 'fly.toml'
-      - 'requirements*.txt'
 
 jobs:
   deploy:
