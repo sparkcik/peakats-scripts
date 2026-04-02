@@ -204,6 +204,20 @@ app = Flask(__name__)
 
 
 
+
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Forge-Key"
+    return response
+
+@app.route("/twilio/call", methods=["OPTIONS"])
+@app.route("/twilio/send", methods=["OPTIONS"])
+@app.route("/voicemail/audio", methods=["OPTIONS"])
+def cors_preflight():
+    return "", 200
+
 import traceback as _tb
 
 @app.errorhandler(Exception)
