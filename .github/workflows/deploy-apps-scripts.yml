@@ -1,0 +1,50 @@
+name: Deploy Apps Scripts via clasp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/*.gs'
+
+jobs:
+  deploy-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Write clasp credentials
+        run: echo '${{ secrets.CLASP_TOKEN }}' > ~/.clasprc.json
+
+      - name: Deploy changed scripts
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/*.gs' 2>/dev/null || git show --name-only HEAD -- 'scripts/*.gs')
+          echo "Changed files: $CHANGED"
+          
+          deploy_script() {
+            local file=$1
+            local script_id=$2
+            local name=$(basename $file .gs)
+            echo "Deploying $name to $script_id"
+            mkdir -p /tmp/clasp_$name
+            cp $file /tmp/clasp_$name/Code.gs
+            echo "{\"scriptId\": \"$script_id\"}" > /tmp/clasp_$name/.clasp.json
+            cd /tmp/clasp_$name && clasp push --force
+          }
+          
+          for file in $CHANGED; do
+            case $file in
+              scripts/fadv_gmail_parser.gs) deploy_script $file "10nIN-2okRobqErZ58QSqjs4ffXNs5578qDqlQ2jTdiB0KUU9wdZN-E1Z" ;;
+              scripts/gcic_gmail_parser.gs)  deploy_script $file "14meEf_CGplJRlIVYHKrV1jFi2lWPECMERXWLjmFbHM0N7Fj3aoJkYfUY" ;;
+              scripts/fadv_drug_trigger.gs)  deploy_script $file "1QqRRUootcymqMoSR25_SpK2C4GKG9OKAvFw-G5MTOvFYJs3ReJErYdX_" ;;
+              scripts/adobesign_router.gs)   deploy_script $file "1PtkUlu5cfBNsScizH10S1KMjHskvSKE8p8R_384TygRo7R2lzyUsSQg1" ;;
+              scripts/gcic_adobe_trigger.gs) deploy_script $file "1WenEEz2AvsO-DOVl6jikApZpIfajFjgjdL2yNzZU1FikAegIsD2M_nGr" ;;
+            esac
+          done
