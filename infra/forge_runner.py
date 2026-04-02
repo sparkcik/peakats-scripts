@@ -478,8 +478,40 @@ def twilio_inbound_sms():
 @app.route("/twilio/voice", methods=["POST"])
 def twilio_inbound_voice():
     from_number = request.form.get("From", "")
+    call_sid = request.form.get("CallSid", "")
     log.info(f"[twilio] Inbound call from {from_number}")
-    return Response(TWIML_GREETING, mimetype="application/xml")
+    clean = "".join(c for c in from_number if c.isdigit())
+    if clean.startswith("1") and len(clean) == 11:
+        clean = clean[1:]
+    whisper_url = f"https://eyopvsmsvbgfuffscfom.supabase.co/functions/v1/twilio-whisper?caller={clean}"
+    caller_id = from_number if from_number else TWILIO_FROM_NUMBER
+    candidate = _match_candidate(from_number)
+    now = datetime.now(timezone.utc).isoformat()
+    http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/candidate_comms",
+        headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+        json={
+            "candidate_id": candidate["id"] if candidate else None,
+            "client_id": candidate["client_id"] if candidate else None,
+            "channel": "voice",
+            "direction": "inbound",
+            "body": f"Inbound call from {from_number}",
+            "sent_at": now,
+            "sent_by": "twilio_webhook",
+            "send_mode": "automated",
+            "from_number": _clean_phone(from_number),
+            "to_number": _clean_phone(TWILIO_FROM_NUMBER),
+            "delivery_status": "delivered",
+            "external_message_id": call_sid,
+        },
+    )
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial callerId="{caller_id}" timeout="20" action="/twilio/voice/missed">
+        <Number url="{whisper_url}">+14043862799</Number>
+    </Dial>
+</Response>"""
+    return Response(twiml, mimetype="application/xml")
 
 
 @app.route("/twilio/voice/recording", methods=["POST"])
