@@ -213,9 +213,7 @@ def add_cors(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Forge-Key"
     return response
 
-@app.route("/twilio/call", methods=["OPTIONS"])
-@app.route("/twilio/send", methods=["OPTIONS"])
-@app.route("/voicemail/audio", methods=["OPTIONS"])
+@app.route("/twilio/preflight", methods=["OPTIONS", "GET"])
 def cors_preflight():
     return "", 200
 
