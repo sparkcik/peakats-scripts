@@ -448,6 +448,27 @@ def twilio_outbound_call():
         log.info(f"[twilio/call] {to_e164} -> {body.get('sid','')}")
         if r.status_code >= 400:
             return jsonify({"error": body.get("message", "call failed")}), 500
+        # Log outbound call to candidate_comms
+        now = datetime.now(timezone.utc).isoformat()
+        candidate = _match_candidate(to_e164)
+        http_requests.post(
+            f"{SUPABASE_URL}/rest/v1/candidate_comms",
+            headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+            json={
+                "candidate_id": candidate["id"] if candidate else None,
+                "client_id": candidate["client_id"] if candidate else None,
+                "channel": "voice",
+                "direction": "outbound",
+                "body": f"Outbound call to {to_e164}",
+                "sent_at": now,
+                "sent_by": "pwa_dialpad",
+                "send_mode": "manual",
+                "from_number": _clean_phone(TWILIO_FROM_NUMBER),
+                "to_number": _clean_phone(to_e164),
+                "delivery_status": body.get("status", "queued"),
+                "external_message_id": body.get("sid", ""),
+            },
+        )
         return jsonify({"status": body.get("status"), "sid": body.get("sid")})
     except Exception as e:
         log.error(f"[twilio/call] Exception: {e}")
