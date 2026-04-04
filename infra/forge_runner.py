@@ -639,6 +639,45 @@ def twilio_voice_missed():
     return Response(TWIML_GREETING, mimetype="application/xml")
 
 
+# ── Scheduler Functions ────────────────────────────────────────────────────────
+
+def _sms_scheduler():
+    """Polls sms_send_queue every 15 minutes for pending outbound messages."""
+    import schedule as _schedule
+    _schedule.every(15).minutes.do(_poll_sms_queue)
+    log.info("[scheduler] sms_queue_poller started -- every 15 min")
+    while True:
+        _schedule.run_pending()
+        time.sleep(60)
+
+def _daily_scheduler():
+    """Runs daily reminder jobs at 08:00 UTC."""
+    import schedule as _schedule
+    _schedule.every().day.at("08:00").do(_run_daily_reminders)
+    log.info("[scheduler] daily_scheduler started -- 08:00 UTC")
+    while True:
+        _schedule.run_pending()
+        time.sleep(60)
+
+def _poll_sms_queue():
+    """Check sms_send_queue for pending messages."""
+    try:
+        resp = http_requests.get(
+            f"{SUPABASE_URL}/rest/v1/sms_send_queue",
+            headers=_SB_HEADERS,
+            params={"status": "eq.pending", "migration_status": "eq.twilio_active", "select": "id,to_number,body,media_url"}
+        )
+        rows = resp.json() if resp.status_code == 200 else []
+        if rows:
+            log.info(f"[sms_poller] {len(rows)} pending messages in queue")
+    except Exception as e:
+        log.error(f"[sms_poller] Error: {e}")
+
+def _run_daily_reminders():
+    """Placeholder for daily reminder jobs."""
+    log.info("[daily] Running daily reminders")
+
+
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("forge-runner v1.3.0 starting")
