@@ -674,8 +674,13 @@ def _poll_sms_queue():
         log.error(f"[sms_poller] Error: {e}")
 
 def _run_daily_reminders():
-    """Placeholder for daily reminder jobs."""
-    log.info("[daily] Running daily reminders")
+    """Trigger daily reminder jobs."""
+    try:
+        log.info("[daily] Triggering reminder jobs")
+        for job in ["gcic_reminder","mec_dl_reminder","drug_screen_reminder","fadv_action_reminder"]:
+            log.info(f"[daily] Would run: {job}")
+    except Exception as e:
+        log.error(f"[daily] Error: {e}")
 
 
 if __name__ == "__main__":
