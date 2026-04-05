@@ -47,3 +47,4 @@ All client/candidate-facing communications use the name **Kai**. The operator is
 
 ## GitHub
 `sparkcik/peakats-scripts` -- push all script changes here after editing.
+<!-- redeploy trigger: 2026-04-05T19:54:22.241874 -->
