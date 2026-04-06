@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 gcic_outreach_trigger.py
-Detects candidates with background_status='In Progress' and no GCIC outreach sent,
+Detects candidates with background_status IN ('In Progress','Needs Further Review') and no GCIC outreach sent,
 queues Template 2 SMS via sms_send_queue (or T52 for cold candidates pre-Feb 2026).
 
 Runs on forge-local (Fly.io) every 30 minutes via forge_runner.py scheduler.
@@ -121,7 +121,7 @@ def run_gcic_outreach():
     # Query candidates needing outreach
     candidates = sb_get('candidates', {
         'select': 'id,first_name,last_name,client_id,phone,created_at',
-        'background_status': 'eq.In Progress',
+        'background_status': 'in.(In Progress,Needs Further Review)',
         'or': '(gcic_text_sent.is.null,gcic_text_sent.eq.0)',
         'and': '(gcic_stage.is.null,gcic_stage.eq.)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
@@ -200,12 +200,12 @@ def run_gcic_outreach():
                 'template_id': tpl_id,
                 'template_name': tpl_name,
                 'status': 'pending',
-                'channel': 'rc',
+                'migration_status': 'twilio_active',
                 'scheduled_for': scheduled_for,
                 'created_by': CREATED_BY
             })
         except Exception as e:
-            print(f'         FAILED to queue SMS: {e}')
+            print(f'         FAILED to queue SMS -- NOT stamping candidate: {e}')
             continue
 
         # Update candidate
