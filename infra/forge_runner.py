@@ -280,7 +280,7 @@ def health():
     return jsonify({
         "status": "running",
         "daemon": "forge-runner",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "timestamp": datetime.now().isoformat(),
     })
 
@@ -712,7 +712,7 @@ def _daily_scheduler():
 
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info("forge-runner v1.4.0 starting")
+    log.info("forge-runner v1.5.0 starting")
     log.info(f"Port:        {PORT}")
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
