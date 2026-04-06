@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-forge_runner.py — forge-local executor daemon
+forge_runner.py -- forge-local executor daemon
 Part of Crucible OS / forge-local
 
 Listens for authenticated webhook commands from forge-cloud/bridge
@@ -14,6 +14,12 @@ Usage:
     python3 infra/forge_runner.py
 
 Managed by launchd (com.crucible.forge-runner.plist)
+
+v1.4.0 -- 2026-04-06
+  - Fixed _poll_sms_queue: now executes sms_queue_poller.py via subprocess
+  - Fixed _run_daily_reminders: now executes reminder scripts via subprocess
+  - Removed twilio_call_sync from WHITELIST (script does not exist)
+  - pg_cron is the primary scheduler; internal scheduler is backup
 """
 
 import os
@@ -29,40 +35,39 @@ from pathlib import Path
 from flask import Flask, request, jsonify, Response
 import requests as http_requests
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# -- Config -------------------------------------------------------------------
 
 PORT = 5678
 SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", str(Path.home() / "peakats-scripts")))
 LOG_DIR = Path(os.environ.get("LOG_DIR", str(SCRIPTS_DIR / "logs")))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Auth key — set FORGE_RUNNER_KEY in environment or launchd plist
 AUTH_KEY = os.environ.get("FORGE_RUNNER_KEY", "forge-local-2026")
 
-# ── Command Whitelist ───────────────────────────────────────────────────────────
-# Maps command alias → actual script path + default args
+# -- Command Whitelist --------------------------------------------------------
+# Maps command alias -> actual script path + default args
 # Only these commands can be executed. Nothing else.
 
 WHITELIST = {
     "fadv_update": {
         "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.2.py"),
-        "description": "FADV reconciliation — sync BG/drug status from CSV exports to Supabase",
+        "description": "FADV reconciliation -- sync BG/drug status from CSV exports to Supabase",
         "allowed_args": ["--batch", "--client"],
     },
     "fadv_update_batch": {
         "script": str(SCRIPTS_DIR / "scripts" / "peak_fadv_update_v6.2.py"),
-        "description": "FADV reconciliation — all clients batch mode",
+        "description": "FADV reconciliation -- all clients batch mode",
         "fixed_args": ["--batch"],
         "allowed_args": [],
     },
     "rig_process": {
         "script": str(SCRIPTS_DIR / "scripts" / "peak_rig_processor_v2.py"),
-        "description": "Resume scoring via Gemini — process new resumes for a client",
+        "description": "Resume scoring via Gemini -- process new resumes for a client",
         "allowed_args": ["--client", "--limit", "--create-unmatched"],
     },
     "batch_process": {
         "script": str(SCRIPTS_DIR / "scripts" / "peak_process_batch_v2.py"),
-        "description": "Batch resume processing — full pipeline for a client folder",
+        "description": "Batch resume processing -- full pipeline for a client folder",
         "allowed_args": ["--client"],
     },
     "find_missing": {
@@ -77,12 +82,12 @@ WHITELIST = {
     },
     "fadv_bot": {
         "script": str(SCRIPTS_DIR / "fadv" / "fadv_entry_bot.py"),
-        "description": "FADV entry bot — submit candidates to FADV portal",
+        "description": "FADV entry bot -- submit candidates to FADV portal",
         "allowed_args": ["--client", "--test", "--list"],
     },
     "sms_queue": {
         "script": str(SCRIPTS_DIR / "sms_queue_poller.py"),
-        "description": "SMS queue poller — send pending scheduled messages via RingCentral",
+        "description": "SMS queue poller -- send pending scheduled messages via Twilio",
         "allowed_args": ["--dry-run"],
     },
     "shell": {
@@ -92,22 +97,22 @@ WHITELIST = {
     },
     "ping": {
         "script": None,
-        "description": "Health check — returns daemon status",
+        "description": "Health check -- returns daemon status",
         "allowed_args": [],
     },
     "rc_inbox": {
         "script": str(SCRIPTS_DIR / "rc_inbox_command.py"),
-        "description": "Read RC SMS inbox for 470-857-4325 — returns inbound messages with candidate matches",
+        "description": "Read RC SMS inbox -- returns inbound messages with candidate matches",
         "allowed_args": ["--limit", "--unread-only", "--mark-read", "--format"],
     },
     "rc_inbox_cron": {
         "script": str(SCRIPTS_DIR / "rc_inbox_cron.py"),
-        "description": "Poll RC inbox every 30 min, match candidates, write to candidate_comms + sms_triage_queue",
+        "description": "Poll RC inbox, match candidates, write to candidate_comms + sms_triage_queue",
         "allowed_args": ["--dry-run"],
     },
     "rc_data_capture": {
         "script": str(SCRIPTS_DIR / "scripts" / "rc_data_capture_cloud.py"),
-        "description": "Capture RC SMS + call history to Supabase archive tables and rebuild contact export",
+        "description": "Capture RC SMS + call history to Supabase archive tables",
         "allowed_args": ["--days"],
     },
     "twilio_send": {
@@ -122,12 +127,12 @@ WHITELIST = {
     },
     "gcic_outreach": {
         "script": str(SCRIPTS_DIR / "scripts" / "gcic_outreach_trigger.py"),
-        "description": "GCIC outreach — queue Template 2 SMS for candidates with BG In Progress and no GCIC sent",
+        "description": "GCIC outreach -- queue Template 2 SMS for BG In Progress candidates",
         "allowed_args": ["--dry-run"],
     },
     "mec_outreach": {
         "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_trigger.py"),
-        "description": "MEC/DL outreach — send Template 15/46/37 SMS based on drug/BG status for MEC/DL collection",
+        "description": "MEC/DL outreach -- send Template 15/46/37 SMS based on drug/BG status",
         "allowed_args": [],
     },
     "mec_dl_backfill": {
@@ -137,22 +142,22 @@ WHITELIST = {
     },
     "mec_dl_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_reminder.py"),
-        "description": "MEC/DL reminder cadence -- 3-day escalating reminders (T16/17/18) for candidates with outreach sent but docs not uploaded",
+        "description": "MEC/DL reminder cadence -- 3-day escalating reminders (T16/17/18)",
         "allowed_args": ["--dry-run"],
     },
     "drug_screen_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "drug_screen_reminder.py"),
-        "description": "Drug screen reminder cadence -- 3-day escalating reminders (T48/49/50) for candidates with drug outreach sent but test not started",
+        "description": "Drug screen reminder cadence -- 3-day escalating reminders (T48/49/50)",
         "allowed_args": ["--dry-run"],
     },
     "fadv_action_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "fadv_action_reminder.py"),
-        "description": "FADV action reminder cadence -- 3-day escalating reminders (T42/43/44) for candidates needing further review action",
+        "description": "FADV action reminder cadence -- 3-day escalating reminders (T42/43/44)",
         "allowed_args": ["--dry-run"],
     },
     "gcic_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "gcic_reminder.py"),
-        "description": "GCIC reminder cadence -- 3-day escalating reminders (T8/9/10) for candidates with GCIC outreach sent but form not completed",
+        "description": "GCIC reminder cadence -- 3-day escalating reminders (T8/9/10)",
         "allowed_args": ["--dry-run"],
     },
     "mec_dl_fup": {
@@ -177,16 +182,12 @@ WHITELIST = {
         "description": "Indeed intake -- fetch portal pages via Chrome cookies, parse resumes, score + write to Supabase",
         "allowed_args": ["--dry_run", "--batch_size", "--station", "--skip_score"],
     },
-    "twilio_call_sync": {
-        "script": "scripts/twilio_call_sync.py",
-        "allowed_args": [],
-    },
 }
 
-# ── Safe shell commands (read-only whitelist) ───────────────────────────────────
+# -- Safe shell commands (read-only whitelist) ---------------------------------
 SAFE_SHELL_PREFIXES = ("find ", "ls ", "cat ", "head ", "tail ", "wc ", "git ", "echo ")
 
-# ── Logging ─────────────────────────────────────────────────────────────────────
+# -- Logging ------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -198,12 +199,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("forge-runner")
 
-# ── Flask App ───────────────────────────────────────────────────────────────────
+# -- Flask App ----------------------------------------------------------------
 
 app = Flask(__name__)
-
-
-
 
 
 @app.after_request
@@ -237,7 +235,6 @@ def build_command(command: str, args: dict) -> list | None:
     if command == "ping":
         return ["ping"], None
 
-    # Shell passthrough — read-only commands only
     if command == "shell":
         cmd_str = args.get("cmd", "").strip()
         if not cmd_str:
@@ -257,7 +254,6 @@ def build_command(command: str, args: dict) -> list | None:
 
     allowed = {a.lstrip("-") for a in spec.get("allowed_args", [])}
     if isinstance(args, list):
-        # List-style args: validate each flag against the whitelist
         for arg in args:
             arg_str = str(arg)
             if arg_str.startswith("--"):
@@ -277,14 +273,14 @@ def build_command(command: str, args: dict) -> list | None:
     return cmd, None
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────────
+# -- Routes -------------------------------------------------------------------
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
         "status": "running",
         "daemon": "forge-runner",
-        "version": "1.2.0",
+        "version": "1.4.0",
         "timestamp": datetime.now().isoformat(),
     })
 
@@ -368,7 +364,7 @@ def list_whitelist():
     return jsonify({
         "commands": {
             name: {
-                "description": spec["description"],
+                "description": spec.get("description", ""),
                 "allowed_args": spec.get("allowed_args", []),
             }
             for name, spec in WHITELIST.items()
@@ -376,8 +372,7 @@ def list_whitelist():
     })
 
 
-# ── Twilio Webhook Routes (public — no X-Forge-Key required) ──────────────────
-# These handle inbound Twilio SMS and voice POSTs on the existing port 8080.
+# -- Twilio Webhook Routes (public) -------------------------------------------
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -419,7 +414,6 @@ TWIML_GREETING = """<?xml version="1.0" encoding="UTF-8"?>
 TWIML_RECORDING_ACK = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>'
 
 
-
 @app.route("/twilio/call", methods=["POST", "OPTIONS"])
 def twilio_outbound_call():
     if request.method == "OPTIONS":
@@ -448,7 +442,6 @@ def twilio_outbound_call():
         log.info(f"[twilio/call] {to_e164} -> {body.get('sid','')}")
         if r.status_code >= 400:
             return jsonify({"error": body.get("message", "call failed")}), 500
-        # Log outbound call to candidate_comms
         now = datetime.now(timezone.utc).isoformat()
         candidate = _match_candidate(to_e164)
         http_requests.post(
@@ -515,7 +508,6 @@ def twilio_inbound_sms():
     now = datetime.now(timezone.utc).isoformat()
     clean_from = _clean_phone(from_number)
 
-    # Always write to sms_triage_queue -- this is what the PWA reads
     http_requests.post(
         f"{SUPABASE_URL}/rest/v1/sms_triage_queue",
         headers={**_SB_HEADERS, "Prefer": "return=minimal"},
@@ -532,7 +524,6 @@ def twilio_inbound_sms():
         },
     )
 
-    # Also log to candidate_comms if matched
     if candidate:
         http_requests.post(
             f"{SUPABASE_URL}/rest/v1/candidate_comms",
@@ -612,7 +603,6 @@ def twilio_voice_recording():
     if candidate:
         candidate_name = f"{candidate.get('first_name','')} {candidate.get('last_name','')}".strip()
 
-    # Write to twilio_voicemail -- this is what the PWA reads
     http_requests.post(
         f"{SUPABASE_URL}/rest/v1/twilio_voicemail",
         headers={**_SB_HEADERS, "Prefer": "return=minimal"},
@@ -639,66 +629,100 @@ def twilio_voice_missed():
     return Response(TWIML_GREETING, mimetype="application/xml")
 
 
-# ── Scheduler Functions ────────────────────────────────────────────────────────
+# -- Scheduler ----------------------------------------------------------------
+# NOTE: pg_cron is the primary scheduler (hits forge-bridge every 15/30 min).
+# The internal scheduler below is a backup layer only.
+# Both run independently -- pg_cron does not require forge-runner to be the initiator.
 
-def _sms_scheduler():
-    """Polls sms_send_queue every 15 minutes for pending outbound messages."""
-    import schedule as _schedule
-    _schedule.every(15).minutes.do(_poll_sms_queue)
-    log.info("[scheduler] sms_queue_poller started -- every 15 min")
-    while True:
-        _schedule.run_pending()
-        time.sleep(60)
+def _run_script(command_name):
+    """Execute a whitelisted script via subprocess. Used by internal scheduler."""
+    spec = WHITELIST.get(command_name)
+    if not spec or not spec.get("script"):
+        log.error(f"[scheduler] Unknown or invalid command: {command_name}")
+        return
+    script = spec["script"]
+    if not Path(script).exists():
+        log.error(f"[scheduler] Script not found: {script}")
+        return
+    log.info(f"[scheduler] Running: {command_name}")
+    try:
+        result = subprocess.run(
+            ["python3", script],
+            capture_output=True,
+            text=True,
+            timeout=270,
+            cwd=str(SCRIPTS_DIR),
+        )
+        if result.stdout:
+            log.info(f"[scheduler][{command_name}] stdout: {result.stdout[-500:]}")
+        if result.stderr:
+            log.warning(f"[scheduler][{command_name}] stderr: {result.stderr[-300:]}")
+        log.info(f"[scheduler][{command_name}] returncode: {result.returncode}")
+    except subprocess.TimeoutExpired:
+        log.error(f"[scheduler][{command_name}] timed out after 270s")
+    except Exception as e:
+        log.error(f"[scheduler][{command_name}] exception: {e}")
 
-def _daily_scheduler():
-    """Runs daily reminder jobs at 08:00 UTC."""
-    import schedule as _schedule
-    _schedule.every().day.at("08:00").do(_run_daily_reminders)
-    log.info("[scheduler] daily_scheduler started -- 08:00 UTC")
-    while True:
-        _schedule.run_pending()
-        time.sleep(60)
 
 def _poll_sms_queue():
-    """Check sms_send_queue for pending messages."""
-    try:
-        resp = http_requests.get(
-            f"{SUPABASE_URL}/rest/v1/sms_send_queue",
-            headers=_SB_HEADERS,
-            params={"status": "eq.pending", "migration_status": "eq.twilio_active", "select": "id,to_number,body,media_url"}
-        )
-        rows = resp.json() if resp.status_code == 200 else []
-        if rows:
-            log.info(f"[sms_poller] {len(rows)} pending messages in queue")
-    except Exception as e:
-        log.error(f"[sms_poller] Error: {e}")
+    """Execute sms_queue_poller.py every 15 min."""
+    _run_script("sms_queue")
+
+
+def _run_gcic_outreach():
+    """Execute gcic_outreach_trigger.py every 30 min."""
+    _run_script("gcic_outreach")
+
 
 def _run_daily_reminders():
-    """Trigger daily reminder jobs."""
-    try:
-        log.info("[daily] Triggering reminder jobs")
-        for job in ["gcic_reminder","mec_dl_reminder","drug_screen_reminder","fadv_action_reminder"]:
-            log.info(f"[daily] Would run: {job}")
-    except Exception as e:
-        log.error(f"[daily] Error: {e}")
+    """Execute all daily reminder scripts at 08:00 UTC."""
+    for job in ["gcic_reminder", "mec_dl_reminder", "drug_screen_reminder", "fadv_action_reminder"]:
+        _run_script(job)
+
+
+def _sms_scheduler():
+    """Backup SMS queue poller -- every 15 minutes."""
+    import schedule as _schedule
+    _schedule.every(15).minutes.do(_poll_sms_queue)
+    log.info("[scheduler] sms_queue_poller started -- every 15 min (backup to pg_cron)")
+    while True:
+        _schedule.run_pending()
+        time.sleep(60)
+
+
+def _gcic_outreach_scheduler():
+    """Backup GCIC outreach -- every 30 minutes."""
+    import schedule as _schedule
+    _schedule.every(30).minutes.do(_run_gcic_outreach)
+    log.info("[scheduler] gcic_outreach started -- every 30 min (backup to pg_cron)")
+    while True:
+        _schedule.run_pending()
+        time.sleep(60)
+
+
+def _daily_scheduler():
+    """Backup daily reminders -- 08:00 UTC."""
+    import schedule as _schedule
+    _schedule.every().day.at("08:00").do(_run_daily_reminders)
+    log.info("[scheduler] daily_reminders started -- 08:00 UTC (backup to pg_cron)")
+    while True:
+        _schedule.run_pending()
+        time.sleep(60)
 
 
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info("forge-runner v1.3.0 starting")
+    log.info("forge-runner v1.4.0 starting")
     log.info(f"Port:        {PORT}")
     log.info(f"Scripts dir: {SCRIPTS_DIR}")
     log.info(f"Log dir:     {LOG_DIR}")
     log.info(f"Whitelist:   {list(WHITELIST.keys())}")
-    log.info("Scheduler:   sms_queue_poller every 15 min")
-    log.info("Scheduler:   daily reminders at 08:00 UTC, gcic_outreach every 30 min")
+    log.info("Scheduler:   pg_cron is primary. Internal scheduler is backup.")
     log.info("=" * 60)
 
-    scheduler = threading.Thread(target=_sms_scheduler, daemon=True)
-    scheduler.start()
-
-    daily = threading.Thread(target=_daily_scheduler, daemon=True)
-    daily.start()
+    threading.Thread(target=_sms_scheduler, daemon=True).start()
+    threading.Thread(target=_gcic_outreach_scheduler, daemon=True).start()
+    threading.Thread(target=_daily_scheduler, daemon=True).start()
 
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)
