@@ -1,281 +1,263 @@
 /**
- * PEAKATS GCIC Adobe Sign Trigger
- * Runs on a 15-minute trigger. Detects Adobe Sign "Signed and Filed" emails
- * for GCIC forms, extracts signed PDF, saves to Drive, emails casedocuments@fadv.com,
- * updates Supabase with stage/status/SR fields.
+ * gcic_adobe_trigger.gs -- HARDENED v5
  *
- * Gmail source: adobesign@adobesign.com subject:"Signed and Filed"
- * Deploy: paste into Google Apps Script editor at script.google.com
- * Trigger: set time-driven trigger -> every 15 minutes on processSignedGCICEmails
+ * Fix 1: Fuzzy name matching -- strips middle names/suffixes, iterates
+ *         possible last name positions, handles no-space usernames like "brandonhadley"
+ * Fix 2: Auto-submit signed PDF to casedocuments@fadv.com after Supabase update
+ *
+ * Trigger: Time-based, every 15 minutes
+ * Searches: GCIC/Pending label for Adobe Sign "Signed and Filed" emails
  */
 
-// -- CONFIG ------------------------------------------------------------------
-var SUPABASE_URL = 'https://eyopvsmsvbgfuffscfom.supabase.co';
-var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
-var FADV_EMAIL = 'casedocuments@fadv.com';
-var GCIC_PROCESSED_LABEL = 'AdobeSign/GCIC-Processed';
-var GCIC_DOCS_ROOT = '1UJfJM6ZMQo2RuVbNWrv4hkBiLnWAZkjB';
-var FROM_NUMBER = '+14704704766';
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+var SUPABASE_URL_G     = 'https://eyopvsmsvbgfuffscfom.supabase.co';
+var SUPABASE_KEY_G     = PropertiesService.getScriptProperties().getProperty('SUPABASE_KEY');
+var FADV_EMAIL         = 'casedocuments@fadv.com';
+var ALERT_EMAIL_G      = 'kai@peakrecruitingco.com';
+var GCIC_PENDING_LBL   = 'GCIC/Pending';
+var GCIC_PROCESSED_LBL = 'AdobeSign/GCIC-Processed';
+var GCIC_FAILED_LBL    = 'GCIC/Failed';
 
-// -- SUPABASE HELPERS --------------------------------------------------------
-var SB_HEADERS = {
-  'apikey': SUPABASE_KEY,
-  'Authorization': 'Bearer ' + SUPABASE_KEY,
-  'Content-Type': 'application/json',
-  'Prefer': 'return=minimal'
+var FADV_CSP_MAP = {
+  'cbm':                     '042443PWO',
+  'cnf_services':            '042443/V0009926',
+  'gods_vision':             '042443JVP',
+  'legacy_chattanooga':      '042443HNB',
+  'legacy_tuscaloosa':       '042443HNB',
+  'legacy_chattanooga_east': '042443HNB',
+  'solpac':                  '042443sdp'
 };
 
-function sbGet_(path, params) {
-  var qs = Object.keys(params || {}).map(function(k) {
-    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
-  }).join('&');
-  var url = SUPABASE_URL + '/rest/v1/' + path + (qs ? '?' + qs : '');
-  var resp = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: SB_HEADERS,
-    muteHttpExceptions: true
-  });
-  return JSON.parse(resp.getContentText());
-}
+var SB_HEADERS_G = {
+  'apikey':        SUPABASE_KEY_G,
+  'Authorization': 'Bearer ' + SUPABASE_KEY_G,
+  'Content-Type':  'application/json',
+  'Prefer':        'return=minimal'
+};
 
-function sbPatch_(path, params, body) {
-  var qs = Object.keys(params || {}).map(function(k) {
-    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
-  }).join('&');
-  var url = SUPABASE_URL + '/rest/v1/' + path + (qs ? '?' + qs : '');
-  UrlFetchApp.fetch(url, {
-    method: 'patch',
-    headers: SB_HEADERS,
-    payload: JSON.stringify(body),
-    muteHttpExceptions: true
-  });
-}
-
-function sbInsert_(path, body) {
-  var url = SUPABASE_URL + '/rest/v1/' + path;
-  UrlFetchApp.fetch(url, {
-    method: 'post',
-    headers: SB_HEADERS,
-    payload: JSON.stringify(body),
-    muteHttpExceptions: true
-  });
-}
-
-// -- GMAIL HELPERS -----------------------------------------------------------
-function getOrCreateLabel_(name) {
-  var label = GmailApp.getUserLabelByName(name);
-  if (!label) {
-    label = GmailApp.createLabel(name);
-  }
-  return label;
-}
-
-// -- MAIN ENTRY POINT --------------------------------------------------------
+// ── MAIN ─────────────────────────────────────────────────────────────────────
 function processSignedGCICEmails() {
-  var query = 'from:adobesign@adobesign.com subject:"GCIC" -label:AdobeSign/GCIC-Processed';
-  var threads = GmailApp.search(query, 0, 50);
+  var pendingLabel   = GmailApp.getUserLabelByName(GCIC_PENDING_LBL);
+  var processedLabel = getOrCreateLabel_(GCIC_PROCESSED_LBL);
+  var failedLabel    = getOrCreateLabel_(GCIC_FAILED_LBL);
 
-  if (threads.length === 0) {
-    Logger.log('[GCIC Trigger] No new signed GCIC emails found.');
+  if (!pendingLabel) {
+    Logger.log('[GCIC] GCIC/Pending label not found -- nothing to process.');
     return;
   }
 
-  var processedLabel = getOrCreateLabel_(GCIC_PROCESSED_LABEL);
+  var threads = pendingLabel.getThreads(0, 50);
+  Logger.log('[GCIC] ' + threads.length + ' thread(s) in GCIC/Pending.');
 
-  Logger.log('[GCIC Trigger] Found ' + threads.length + ' thread(s) to process.');
+  threads.forEach(function(thread) {
+    var msg     = thread.getMessages()[0];
+    var subject = msg.getSubject();
+    Logger.log('[GCIC] Processing: ' + subject);
 
-  for (var t = 0; t < threads.length; t++) {
-    var messages = threads[t].getMessages();
-    for (var m = 0; m < messages.length; m++) {
-      var msg = messages[m];
-      var subject = msg.getSubject();
+    // Extract raw candidate name from subject
+    // Format: "... between Kai M Clarke and [NAME] is Signed and Filed!"
+    var nameMatch = subject.match(/between\s+Kai M\s+Clarke\s+and\s+(.+?)\s+is\s+Signed/i)
+                 || subject.match(/and\s+(.+?)\s+is\s+Signed/i);
 
-      // Skip non-GCIC emails
-      if (subject.toLowerCase().indexOf('gcic') === -1) {
-        Logger.log('[GCIC Trigger] Skipping non-GCIC email: ' + subject);
-        continue;
+    if (!nameMatch) {
+      Logger.log('[GCIC] Could not extract name from subject: ' + subject);
+      moveThread_(thread, pendingLabel, failedLabel, 'Could not extract name from subject');
+      return;
+    }
+
+    var rawName = nameMatch[1].trim();
+    Logger.log('[GCIC] Raw name from subject: ' + rawName);
+
+    // Fix 1: Fuzzy match handles middle names, suffixes, and no-space usernames
+    var candidate = findCandidateFuzzy_(rawName);
+
+    if (!candidate) {
+      Logger.log('[GCIC] No candidate match for: ' + rawName);
+      sbInsert_g('forge_memory', {
+        session_date: new Date().toISOString().split('T')[0],
+        category:     'unmatched_gcic',
+        subject:      'Unmatched GCIC signature: ' + rawName,
+        content:      'Adobe Sign GCIC email received but no candidate match. Raw name: ' + rawName + ' | Subject: ' + subject,
+        target_thread: 'PEAK Ops'
+      });
+      alertForge_g('GCIC no candidate match: ' + rawName,
+        'Adobe Sign GCIC signed but no candidate found in DB.\nSubject: ' + subject + '\nManual: find candidate, update gcic fields in Supabase.');
+      moveThread_(thread, pendingLabel, failedLabel, 'No candidate match: ' + rawName);
+      return;
+    }
+
+    Logger.log('[GCIC] Matched: ' + candidate.id + ' -- ' + candidate.first_name + ' ' + candidate.last_name + ' (' + candidate.client_id + ')');
+
+    // Update Supabase
+    var now  = new Date().toISOString();
+    var code = sbPatch_g('candidates', 'id=eq.' + candidate.id, {
+      gcic_uploaded:       1,
+      gcic_email_sent:     1,
+      gcic_form_completed: 1,
+      gcic_status:         'COMPLETE',
+      gcic_stage:          'SUBMITTED_TO_FADV',
+      updated_at:          now
+    });
+
+    if (code !== 200 && code !== 204) {
+      Logger.log('[GCIC] ERROR: Supabase patch failed for candidate ' + candidate.id + ' code ' + code);
+      moveThread_(thread, pendingLabel, failedLabel, 'Supabase patch failed: code ' + code);
+      return;
+    }
+
+    Logger.log('[GCIC] Supabase updated for candidate ' + candidate.id);
+
+    // Fix 2: Extract PDF and auto-submit to FADV
+    var attachments = msg.getAttachments();
+    var pdf = null;
+    for (var i = 0; i < attachments.length; i++) {
+      if (attachments[i].getContentType() === 'application/pdf') {
+        pdf = attachments[i];
+        break;
       }
+    }
 
-      // Skip test emails (Kai signing with himself)
-      if (subject.indexOf('Kai M Clarke and Kai M Clarke') !== -1) {
-        Logger.log('[GCIC Trigger] Skipping test email: ' + subject);
-        continue;
-      }
+    if (!pdf) {
+      Logger.log('[GCIC] No PDF attachment found -- cannot auto-submit to FADV.');
+      alertForge_g('GCIC PDF missing -- manual submit needed',
+        'Candidate: ' + candidate.first_name + ' ' + candidate.last_name +
+        ' (' + candidate.client_id + ') | Supabase updated but no PDF in email.');
+    } else {
+      var cspId    = FADV_CSP_MAP[candidate.client_id] || 'UNKNOWN';
+      var fullName = candidate.first_name + ' ' + candidate.last_name;
+      var fadvSubj = 'GCIC Authorization -- ' + fullName + ' -- ' + cspId;
 
       try {
-        processOneGCICEmail_(msg, subject);
-      } catch (e) {
-        Logger.log('[GCIC Trigger] Error processing "' + subject + '": ' + e.message);
+        GmailApp.sendEmail(
+          FADV_EMAIL,
+          fadvSubj,
+          'Please find attached the executed GCIC authorization form for the above-referenced candidate.\n\n' +
+          'This document was electronically signed via Adobe Acrobat Sign and includes IP capture per GCIC requirements.\n\n' +
+          'Kai\nPEAKrecruiting',
+          { attachments: [pdf] }
+        );
+        Logger.log('[GCIC] PDF submitted to FADV: ' + fadvSubj);
+      } catch(e) {
+        Logger.log('[GCIC] ERROR sending to FADV: ' + e.message);
+        alertForge_g('GCIC FADV send failed',
+          'Candidate: ' + fullName + ' | Error: ' + e.message + ' | Manual submit required.');
       }
     }
-    threads[t].addLabel(processedLabel);
-  }
 
-  Logger.log('[GCIC Trigger] Done. Processed ' + threads.length + ' thread(s).');
-}
-
-// -- PROCESS SINGLE EMAIL ----------------------------------------------------
-function processOneGCICEmail_(msg, subject) {
-  // Extract candidate name from subject
-  // Patterns: "... between Kai M Clarke and [NAME] is Signed and Filed!"
-  var nameMatch = subject.match(/and\s+(.+?)\s+is\s+Signed/i);
-  if (!nameMatch) {
-    Logger.log('[GCIC Trigger] Could not extract name from subject: ' + subject);
-    return;
-  }
-  var fullName = nameMatch[1].trim();
-
-  // Extract order ID if present
-  var orderMatch = subject.match(/Order ID:\s*(\d+)/i);
-  var orderId = orderMatch ? orderMatch[1] : null;
-
-  // Get PDF attachment
-  var attachments = msg.getAttachments();
-  var pdfBlob = null;
-  for (var i = 0; i < attachments.length; i++) {
-    if (attachments[i].getContentType() === 'application/pdf') {
-      pdfBlob = attachments[i];
-      break;
-    }
-  }
-
-  if (!pdfBlob) {
-    Logger.log('[GCIC Trigger] No PDF attachment found for: ' + fullName);
-    return;
-  }
-
-  // Split name
-  var nameParts = fullName.split(/\s+/);
-  var firstName = nameParts[0] || '';
-  var lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
-
-  Logger.log('[GCIC Trigger] Candidate: ' + fullName + ' | Order ID: ' + (orderId || 'N/A'));
-
-  // Match candidate
-  var candidate = matchCandidate_(firstName, lastName);
-
-  if (candidate) {
-    Logger.log('[GCIC Trigger] Matched candidate ID ' + candidate.id + ' (' + candidate.first_name + ' ' + candidate.last_name + ')');
-    saveGCICToDrive_(pdfBlob, candidate.client_id, candidate.first_name, candidate.last_name);
-    sendToFADV_(pdfBlob, candidate.first_name, candidate.last_name, candidate.background_id, orderId);
-    updateSupabase_(candidate.id, orderId);
-  } else {
-    Logger.log('[GCIC Trigger] No match for: ' + fullName);
-    logUnmatched_(fullName, orderId, subject);
-  }
-}
-
-// -- MATCH CANDIDATE ---------------------------------------------------------
-function matchCandidate_(firstName, lastName) {
-  // Exact first + last match only -- no fallback
-  var results = sbGet_('candidates', {
-    'select': 'id,phone,first_name,last_name,client_id,background_id',
-    'first_name': 'ilike.' + firstName,
-    'last_name': 'ilike.' + lastName,
-    'status': 'not.in.(Rejected,Hired,Transferred)',
-    'limit': '5'
+    // Mark processed
+    moveThread_(thread, pendingLabel, processedLabel, null);
+    Logger.log('[GCIC] Done: ' + candidate.first_name + ' ' + candidate.last_name);
   });
+}
 
-  if (results && results.length === 1) {
-    return results[0];
+// ── FIX 1: Fuzzy name matching ────────────────────────────────────────────────
+function findCandidateFuzzy_(rawName) {
+  // Strip suffixes
+  var cleaned = rawName
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv|esq\.?)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Handle no-space usernames like "brandonhadley" -- try camelCase split
+  // If single token, try to split on case boundary or just use as first name search
+  var parts = cleaned.split(' ');
+
+  if (parts.length === 1) {
+    // Single word -- try direct first+last split by trying substrings
+    var word = parts[0].toLowerCase();
+    // Try all split points
+    for (var i = 3; i < word.length - 2; i++) {
+      var tryFirst = word.substring(0, i);
+      var tryLast  = word.substring(i);
+      var r = sbGet_g('candidates', {
+        'first_name': 'ilike.' + tryFirst,
+        'last_name':  'ilike.' + tryLast,
+        'select':     'id,first_name,last_name,phone,client_id',
+        'limit':      '1'
+      });
+      if (r && r.length) return r[0];
+    }
+    // Fallback: first name only
+    return sbFindByFirst_(word);
   }
 
-  if (results && results.length > 1) {
-    Logger.log('[GCIC Trigger] WARNING: Multiple matches for ' + firstName + ' ' + lastName + ' -- using first result');
-    return results[0];
+  var first = parts[0];
+  var last  = parts[parts.length - 1];
+
+  // Try exact first + last
+  var r1 = sbGet_g('candidates', {
+    'first_name': 'ilike.' + first,
+    'last_name':  'ilike.' + last,
+    'select':     'id,first_name,last_name,phone,client_id',
+    'limit':      '1'
+  });
+  if (r1 && r1.length) return r1[0];
+
+  // Try all word positions as last name (handles middle names)
+  for (var j = 1; j < parts.length; j++) {
+    var r2 = sbGet_g('candidates', {
+      'first_name': 'ilike.' + first,
+      'last_name':  'ilike.' + parts[j],
+      'select':     'id,first_name,last_name,phone,client_id',
+      'limit':      '1'
+    });
+    if (r2 && r2.length) return r2[0];
   }
 
   return null;
 }
 
-// -- SAVE TO DRIVE -----------------------------------------------------------
-function saveGCICToDrive_(pdfBlob, clientId, firstName, lastName) {
-  try {
-    var root = DriveApp.getFolderById(GCIC_DOCS_ROOT);
-
-    // Get or create client subfolder
-    var clientFolder;
-    var clientFolders = root.getFoldersByName(clientId || 'unknown');
-    if (clientFolders.hasNext()) {
-      clientFolder = clientFolders.next();
-    } else {
-      clientFolder = root.createFolder(clientId || 'unknown');
-    }
-
-    // Get or create gcic subfolder
-    var gcicFolder;
-    var gcicFolders = clientFolder.getFoldersByName('gcic');
-    if (gcicFolders.hasNext()) {
-      gcicFolder = gcicFolders.next();
-    } else {
-      gcicFolder = clientFolder.createFolder('gcic');
-    }
-
-    // Build filename: YYYY-MM-DD_LastFirst_GCIC.pdf
-    var today = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
-    var cleanFirst = (firstName || '').replace(/[^a-zA-Z]/g, '');
-    var cleanLast = (lastName || '').replace(/[^a-zA-Z]/g, '');
-    var filename = today + '_' + cleanLast + cleanFirst + '_GCIC.pdf';
-
-    pdfBlob.setName(filename);
-    gcicFolder.createFile(pdfBlob);
-    Logger.log('[GCIC Trigger] Saved to Drive: ' + clientId + '/gcic/' + filename);
-  } catch (e) {
-    Logger.log('[GCIC Trigger] Drive save failed: ' + e.message);
-  }
-}
-
-// -- SEND TO FADV ------------------------------------------------------------
-function sendToFADV_(pdfBlob, firstName, lastName, backgroundId, orderId) {
-  try {
-    var refId = orderId || backgroundId || 'Pending';
-    var emailSubject = firstName + ' ' + lastName + ' GCIC Form - Order ID: ' + refId;
-    var emailBody = 'Please find attached the executed GCIC authorization form for the above-referenced candidate. '
-      + 'This document was electronically signed via Adobe Acrobat Sign and includes IP capture per GCIC requirements.\n\n'
-      + 'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
-
-    GmailApp.sendEmail(FADV_EMAIL, emailSubject, emailBody, {
-      attachments: [pdfBlob],
-      name: 'Kai - PEAK Recruiting'
-    });
-    Logger.log('[GCIC Trigger] Emailed FADV: ' + emailSubject);
-  } catch (e) {
-    Logger.log('[GCIC Trigger] FADV email failed: ' + e.message);
-  }
-}
-
-// -- UPDATE SUPABASE ---------------------------------------------------------
-function updateSupabase_(candidateId, orderId) {
-  var now = new Date().toISOString();
-  var patch = {
-    'gcic_stage': 'SUBMITTED_TO_FADV',
-    'gcic_status': 'COMPLETE',
-    'gcic_submitted_to_fadv_at': now,
-    'updated_at': now
-  };
-  if (orderId) {
-    patch['gcic_fadv_order_id'] = orderId;
-  }
-
-  sbPatch_('candidates', { 'id': 'eq.' + candidateId }, patch);
-  Logger.log('[GCIC Trigger] Updated candidate ' + candidateId + ' -> gcic_stage=SUBMITTED_TO_FADV, gcic_status=COMPLETE');
-}
-
-// -- LOG UNMATCHED -----------------------------------------------------------
-function logUnmatched_(fullName, orderId, subject) {
-  var today = Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd');
-
-  sbInsert_('forge_memory', {
-    'session_date': today,
-    'category': 'ops_note',
-    'subject': 'GCIC Signed -- Unmatched: ' + fullName,
-    'content': 'Adobe Sign GCIC signed but no candidate match found. '
-      + 'Order ID: ' + (orderId || 'N/A') + '. '
-      + 'Email subject: ' + subject + '. '
-      + 'Manual match required.',
-    'target_thread': 'PEAK Ops',
-    'tags': ['gcic', 'unmatched', 'manual_review']
+function sbFindByFirst_(first) {
+  var r = sbGet_g('candidates', {
+    'first_name': 'ilike.' + first,
+    'select':     'id,first_name,last_name,phone,client_id',
+    'limit':      '1'
   });
+  return r && r.length ? r[0] : null;
+}
 
-  Logger.log('[GCIC Trigger] Logged unmatched: ' + fullName);
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function moveThread_(thread, fromLabel, toLabel, errorNote) {
+  try { thread.removeLabel(fromLabel); } catch(e) {}
+  try { thread.addLabel(toLabel); }     catch(e) {}
+  if (errorNote) Logger.log('[GCIC] -> ' + toLabel.getName() + ': ' + errorNote);
+}
+
+function alertForge_g(subject, body) {
+  try {
+    GmailApp.sendEmail(ALERT_EMAIL_G, '[PEAK ALERT] ' + subject, body);
+  } catch(e) {
+    Logger.log('[GCIC] Alert send failed: ' + e.message);
+  }
+}
+
+function getOrCreateLabel_(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
+}
+
+function sbGet_g(path, params) {
+  var qs = Object.keys(params).map(function(k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+  }).join('&');
+  var resp = UrlFetchApp.fetch(SUPABASE_URL_G + '/rest/v1/' + path + '?' + qs, {
+    method: 'get', headers: SB_HEADERS_G, muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() !== 200) return null;
+  return JSON.parse(resp.getContentText());
+}
+
+function sbPatch_g(path, filter, body) {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL_G + '/rest/v1/' + path + '?' + filter, {
+    method: 'patch', headers: SB_HEADERS_G,
+    payload: JSON.stringify(body), muteHttpExceptions: true
+  });
+  return resp.getResponseCode();
+}
+
+function sbInsert_g(path, body) {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL_G + '/rest/v1/' + path, {
+    method: 'post', headers: SB_HEADERS_G,
+    payload: JSON.stringify(body), muteHttpExceptions: true
+  });
+  return resp.getResponseCode();
 }
