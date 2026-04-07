@@ -1,40 +1,40 @@
 /**
- * PEAKATS FADV Gmail Parser
- * Runs on a 30-minute trigger. Finds all emails labeled FADV/Pending,
- * parses FADV status from email body, updates Supabase candidates table,
- * moves email to FADV/Processed label.
- *
- * Status maps aligned to peak_fadv_update_v6.2.py taxonomy.
- * Deploy: paste into Google Apps Script editor at script.google.com
- * Trigger: set time-driven trigger → every 30 minutes
+ * PEAKATS FADV Gmail Parser — HARDENED v2
+ * Fixed: silent write failures, bad thread archiving, false update_applied logs,
+ *        added confirmed-write pattern, failure alerts, daily reconciliation.
  */
 
-// ── CONFIG ──────────────────────────────────────────────────────────────────
-const SUPABASE_URL = 'https://eyopvsmsvbgfuffscfom.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
+// ── CONFIG ───────────────────────────────────────────────────────────────────
+const SUPABASE_URL  = 'https://eyopvsmsvbgfuffscfom.supabase.co';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4';
+const ALERT_EMAIL   = 'kai@peakrecruitingco.com';
 const LABEL_PENDING   = 'FADV/Pending';
 const LABEL_PROCESSED = 'FADV/Processed';
+const LABEL_FAILED    = 'FADV/Failed';
 
-// ── STATUS MAPS (aligned to v6.2 taxonomy) ──────────────────────────────────
+// ── STATUS MAPS ──────────────────────────────────────────────────────────────
 const BG_STATUS_MAP = {
-  'Y-Eligible':              'Eligible',
-  'Y-Eligible For Hire':     'Eligible',
-  'N-In-Eligible':           'Ineligible',
-  'N-In-Eligible For Hire':  'Ineligible',
-  'D-Needs further review':  'Needs Further Review',
-  'D-Needs Further Review':  'Needs Further Review',
-  'Cancelled':               'Expired',
+  'Y-Eligible':             'Eligible',
+  'Y-Eligible For Hire':    'Eligible',
+  'N-In-Eligible':          'Ineligible',
+  'N-In-Eligible For Hire': 'Ineligible',
+  'D-Needs further review': 'Needs Further Review',
+  'D-Needs Further Review': 'Needs Further Review',
+  'Cancelled':              'Expired',
 };
 
 const DRUG_STATUS_MAP = {
-  'Negative':        'Pass',
-  'NegativeDilute':  'Fail',
-  'Positive':        'Fail',
-  'Complete':        'In Progress',
-  'NoShow':          'No Show',
-  'Pending':         'In Progress',
-  'Cancelled':       'Expired',
+  'Negative':       'Pass',
+  'NegativeDilute': 'Fail',
+  'Positive':       'Fail',
+  'Complete':       'In Progress',
+  'NoShow':         'No Show',
+  'Pending':        'In Progress',
+  'Cancelled':      'Expired',
 };
+
+// Terminal drug statuses -- CSV processor must NOT overwrite these
+const DRUG_TERMINAL = ['Pass', 'Fail', 'No Show', 'Expired'];
 
 const AUTO_REJECT_STATUSES = ['Ineligible', 'Fail'];
 
@@ -42,45 +42,57 @@ const AUTO_REJECT_STATUSES = ['Ineligible', 'Fail'];
 function processFadvEmails() {
   const pendingLabel = GmailApp.getUserLabelByName(LABEL_PENDING);
   if (!pendingLabel) {
-    Logger.log('Label not found: ' + LABEL_PENDING + ' — create it in Gmail first');
+    Logger.log('Label not found: ' + LABEL_PENDING);
     return;
   }
-
   const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
-  const threads = pendingLabel.getThreads(0, 100); // process up to 100 per run
-
+  const failedLabel    = getOrCreateLabel_(LABEL_FAILED);
+  const threads = pendingLabel.getThreads(0, 100);
   Logger.log('Found ' + threads.length + ' threads to process');
 
   let updated = 0, skipped = 0, unmatched = 0, errors = 0;
 
   threads.forEach(function(thread) {
     const messages = thread.getMessages();
+    let threadHadError = false;
+
     messages.forEach(function(message) {
       try {
         const result = processMessage_(message);
-        if (result === 'updated')   updated++;
+        if (result === 'updated')        updated++;
         else if (result === 'skipped')   skipped++;
         else if (result === 'unmatched') unmatched++;
+        else if (result === 'error') {
+          errors++;
+          threadHadError = true;
+        }
       } catch(e) {
-        Logger.log('ERROR processing message: ' + e.message);
+        Logger.log('EXCEPTION processing message: ' + e.message);
         errors++;
-        return; // leave in FADV/Pending so it retries next run
+        threadHadError = true;
       }
     });
 
-    // Move thread: remove FADV/Pending, add FADV/Processed, strip PEAK/Inbox, mark read, archive
     thread.removeLabel(pendingLabel);
-    thread.addLabel(processedLabel);
-    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
-    if (kaiInbox) thread.removeLabel(kaiInbox);
-    const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
-    if (peakInbox) thread.removeLabel(peakInbox);
-    thread.markRead();
-    thread.moveToArchive();
+    if (threadHadError) {
+      thread.addLabel(failedLabel);
+      Logger.log('Thread left in FADV/Failed for retry: ' + thread.getFirstMessageSubject());
+    } else {
+      thread.addLabel(processedLabel);
+      const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
+      if (kaiInbox) thread.removeLabel(kaiInbox);
+      thread.markRead();
+      thread.moveToArchive();
+    }
   });
 
-  Logger.log('Run complete — Updated: ' + updated + ' | Skipped: ' + skipped +
+  Logger.log('Run complete -- Updated: ' + updated + ' | Skipped: ' + skipped +
              ' | Unmatched: ' + unmatched + ' | Errors: ' + errors);
+
+  if (errors > 0) {
+    alertForge_('FADV Parser write failures: ' + errors,
+      errors + ' message(s) failed to write to Supabase. Check FADV/Failed label in Gmail. Re-label to FADV/Pending to retry.');
+  }
 }
 
 // ── HOURLY TRIGGER WRAPPER ───────────────────────────────────────────────────
@@ -95,21 +107,17 @@ function processMessage_(message) {
   const body    = message.getPlainBody() || message.getBody();
   const msgId   = message.getId();
 
-  // Skip non-FADV emails (safety check)
   if (!subject.includes('First Advantage Screening Alerts')) return 'skipped';
 
-  // Parse candidate name from subject
   const nameMatch = subject.match(/Reported on (.+)$/i);
   const candidateName = nameMatch ? nameMatch[1].trim() : '';
 
-  // Parse CID
   const cidMatch = body.match(/CID #\s*(\d+)/);
   const cid = cidMatch ? cidMatch[1] : '';
 
-  // Detect email type and raw status value
-  const scoreMatch  = body.match(/Score\s*:\s*([A-Z][^\n\r]*?)(?:\s+Click|\s*$)/m);
-  const resultMatch = body.match(/Result\s*:\s*([A-Za-z]+)/m);
-  const cancelMatch = body.match(/Status\s*:\s*Cancelled/i);
+  const scoreMatch   = body.match(/Score\s*:\s*([A-Z][^\n\r]*?)(?:\s+Click|\s*$)/m);
+  const resultMatch  = body.match(/Result\s*:\s*([A-Za-z]+)/m);
+  const cancelMatch  = body.match(/Status\s*:\s*Cancelled/i);
   const pendingMatch = body.match(/Status\s*:\s*Pending/i);
 
   let emailType, rawValue, mappedStatus;
@@ -131,12 +139,11 @@ function processMessage_(message) {
     rawValue     = 'Pending';
     mappedStatus = 'In Progress';
   } else {
-    Logger.log('Could not parse email type for: ' + candidateName + ' | ' + subject);
+    Logger.log('Could not parse email type: ' + candidateName + ' | ' + subject);
     logToSupabase_(msgId, candidateName, cid, 'unknown', '', '', null, 'unmatched', 0, false, 'parse_failed');
     return 'unmatched';
   }
 
-  // Match candidate in Supabase
   const candidate = findCandidate_(cid, candidateName, emailType);
   if (!candidate) {
     Logger.log('No candidate match: ' + candidateName + ' CID: ' + cid);
@@ -144,158 +151,181 @@ function processMessage_(message) {
     return 'unmatched';
   }
 
-  // Check if already current
   const currentVal = emailType === 'background'
     ? candidate.background_status
     : candidate.drug_test_status;
 
   if (currentVal === mappedStatus) {
-    logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus, candidate.id, candidate._match_method, candidate._match_confidence, false, 'already_current');
+    logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus,
+                   candidate.id, candidate._match_method, candidate._match_confidence, false, 'already_current');
     return 'skipped';
   }
 
-  // Apply update
-  updateCandidate_(candidate.id, emailType, mappedStatus);
-  logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus, candidate.id, candidate._match_method, candidate._match_confidence, true, null);
+  const writeOk = updateCandidate_(candidate.id, emailType, mappedStatus);
+  if (!writeOk) {
+    Logger.log('WRITE FAILED for candidate ' + candidate.id + ' (' + candidateName + ')');
+    logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus,
+                   candidate.id, candidate._match_method, candidate._match_confidence, false, 'write_failed');
+    alertForge_('FADV write failure: ' + candidateName,
+      'Candidate ID ' + candidate.id + ' (' + candidateName + ')\n' +
+      'Field: ' + emailType + '\nValue: ' + mappedStatus + '\nCID: ' + cid + '\n\n' +
+      'Manual fix required in Supabase dashboard.');
+    return 'error';
+  }
 
+  logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus,
+                 candidate.id, candidate._match_method, candidate._match_confidence, true, null);
   return 'updated';
 }
 
-// ── FIND CANDIDATE IN SUPABASE ───────────────────────────────────────────────
+// ── FIND CANDIDATE ───────────────────────────────────────────────────────────
 function findCandidate_(cid, name, emailType) {
-  // 1. Try CID match
   if (cid) {
     const cidField = emailType === 'background' ? 'background_id' : 'drug_test_id';
     const res = supabaseGet_('candidates', {
       select: 'id,first_name,last_name,background_status,drug_test_status',
-      [cidField]: 'eq.' + cid,
-      limit: 1
+      [cidField]: 'eq.' + cid, limit: 1
     });
     if (res && res.length > 0) {
-      res[0]._match_method = 'cid';
-      res[0]._match_confidence = 1.0;
-      return res[0];
+      res[0]._match_method = 'cid'; res[0]._match_confidence = 1.0; return res[0];
     }
-
-    // Try other CID field as fallback
     const altField = emailType === 'background' ? 'drug_test_id' : 'background_id';
     const res2 = supabaseGet_('candidates', {
       select: 'id,first_name,last_name,background_status,drug_test_status',
-      [altField]: 'eq.' + cid,
-      limit: 1
+      [altField]: 'eq.' + cid, limit: 1
     });
     if (res2 && res2.length > 0) {
-      res2[0]._match_method = 'cid_fallback';
-      res2[0]._match_confidence = 0.9;
-      return res2[0];
+      res2[0]._match_method = 'cid_fallback'; res2[0]._match_confidence = 0.9; return res2[0];
     }
   }
-
-  // 2. Try exact name match (UPPER normalized)
   if (name) {
     const parts = name.trim().split(/\s+/);
     if (parts.length >= 2) {
-      const firstName = parts[0];
-      const lastName  = parts.slice(1).join(' ');
       const res = supabaseGet_('candidates', {
         select: 'id,first_name,last_name,background_status,drug_test_status',
-        'first_name': 'ilike.' + firstName,
-        'last_name':  'ilike.' + lastName,
+        'first_name': 'ilike.' + parts[0],
+        'last_name':  'ilike.' + parts.slice(1).join(' '),
         limit: 1
       });
       if (res && res.length > 0) {
-        res[0]._match_method = 'name_exact';
-        res[0]._match_confidence = 1.0;
-        return res[0];
+        res[0]._match_method = 'name_exact'; res[0]._match_confidence = 1.0; return res[0];
       }
     }
   }
-
   return null;
 }
 
-// ── UPDATE CANDIDATE IN SUPABASE ─────────────────────────────────────────────
+// ── UPDATE CANDIDATE ─────────────────────────────────────────────────────────
 function updateCandidate_(candidateId, emailType, mappedStatus) {
   const field = emailType === 'background' ? 'background_status' : 'drug_test_status';
   const payload = {
     [field]: mappedStatus,
-    fadv_last_updated: 'gmail_parser'
+    fadv_last_updated: new Date().toISOString()
   };
 
-  // Auto-reject if ineligible or fail
   if (AUTO_REJECT_STATUSES.includes(mappedStatus)) {
     payload.status = 'Rejected';
     payload.reject_reason = 'fadv_ineligible';
   }
 
-  // Resolution detection: if transitioning OUT of Needs Further Review
   if (emailType === 'background' && (mappedStatus === 'Eligible' || mappedStatus === 'In Progress')) {
     const current = supabaseGet_('candidates', {
       select: 'background_status,first_name,phone,fadv_action_required',
-      'id': 'eq.' + candidateId,
-      limit: 1
+      'id': 'eq.' + candidateId, limit: 1
     });
     if (current && current.length > 0 && current[0].background_status === 'Needs Further Review') {
       payload.fadv_action_required = false;
       payload.fadv_action_resolved_at = new Date().toISOString();
-
-      // Send resolved SMS (template 45) ONLY for In Progress, not Eligible
-      // Eligible has its own workflow (template 15)
       if (mappedStatus === 'In Progress' && current[0].phone) {
-        var body = 'Hi ' + (current[0].first_name || '') + ', your background check is back on track -- FADV has resumed processing.\n' +
-          'No further action needed from you.\n\n' +
-          'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
-        sendSms_(current[0].phone, body);
+        var smsBody = 'Hi ' + (current[0].first_name || '') + ', your background check is back on track -- FADV has resumed processing. No further action needed from you.\n\nKai\nPEAKrecruiting';
+        sendSms_(current[0].phone, smsBody);
       }
     }
   }
 
-  supabasePatch_('candidates', 'id=eq.' + candidateId, payload);
+  const code = supabasePatch_('candidates', 'id=eq.' + candidateId, payload);
+  if (code !== 200 && code !== 204) {
+    Logger.log('supabasePatch_ returned ' + code + ' for candidate ' + candidateId);
+    return false;
+  }
+  return true;
 }
 
 // ── LOG TO fadv_email_log ─────────────────────────────────────────────────────
 function logToSupabase_(msgId, name, cid, type, rawScore, rawResult, candidateId, method, confidence, applied, skipReason) {
   try {
-    const payload = {
-      message_id:        msgId,
-      candidate_name:    name,
-      cid:               cid,
-      email_type:        type,
-      raw_score:         type === 'background' ? rawScore : null,
-      raw_result:        type === 'drug' ? rawResult : null,
-      mapped_status:     rawResult || rawScore,
-      candidate_id:      candidateId,
-      match_method:      method,
-      match_confidence:  confidence,
-      update_applied:    applied,
-      skip_reason:       skipReason
-    };
-    supabasePost_('fadv_email_log', payload);
+    supabasePost_('fadv_email_log', {
+      message_id:       msgId,
+      candidate_name:   name,
+      cid:              cid,
+      email_type:       type,
+      raw_score:        type === 'background' ? rawScore : null,
+      raw_result:       type === 'drug' ? rawResult : null,
+      mapped_status:    rawResult || rawScore,
+      candidate_id:     candidateId,
+      match_method:     method,
+      match_confidence: confidence,
+      update_applied:   applied,
+      skip_reason:      skipReason
+    });
   } catch(e) {
     Logger.log('Log write failed (non-fatal): ' + e.message);
+  }
+}
+
+// ── DAILY RECONCILIATION ──────────────────────────────────────────────────────
+function dailyReconciliation() {
+  var cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  var stale = supabaseGet_('candidates', {
+    select: 'id,first_name,last_name,client_id,drug_test_id,drug_test_status,updated_at',
+    'drug_test_id':     'not.is.null',
+    'drug_test_status': 'eq.In Progress',
+    'status':           'not.in.(Rejected,Hired,Transferred)',
+    'updated_at':       'lt.' + cutoff,
+    limit: 100
+  });
+
+  if (!stale || stale.length === 0) { Logger.log('Reconciliation: no stale drug candidates'); return; }
+
+  var lines = stale.map(function(c) {
+    return '- ' + c.first_name + ' ' + c.last_name + ' (' + c.client_id + ') drug_test_id=' + c.drug_test_id + ' last_updated=' + c.updated_at;
+  });
+
+  var msg = stale.length + ' candidate(s) with drug test In Progress older than 3 days.\n\n' +
+    'These may have results in FADV that the parser missed.\nCheck FADV portal and update manually if needed.\n\n' +
+    lines.join('\n');
+
+  Logger.log('Reconciliation alert:\n' + msg);
+  alertForge_('PEAK Daily Audit: ' + stale.length + ' stale drug screens', msg);
+}
+
+// ── ALERT HELPER ─────────────────────────────────────────────────────────────
+function alertForge_(subject, body) {
+  try {
+    GmailApp.sendEmail(ALERT_EMAIL, '[PEAK ALERT] ' + subject, body);
+    Logger.log('Alert sent: ' + subject);
+  } catch(e) {
+    Logger.log('Alert send failed: ' + e.message);
   }
 }
 
 // ── SUPABASE HELPERS ─────────────────────────────────────────────────────────
 function supabaseGet_(table, params) {
   const qs = Object.entries(params).map(([k,v]) => k + '=' + encodeURIComponent(v)).join('&');
-  const url = SUPABASE_URL + '/rest/v1/' + table + '?' + qs;
-  const res = UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + qs, {
     method: 'GET',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
     muteHttpExceptions: true
   });
-  if (res.getResponseCode() !== 200) return null;
+  if (res.getResponseCode() !== 200) {
+    Logger.log('supabaseGet_ failed (' + res.getResponseCode() + '): ' + res.getContentText().substring(0, 200));
+    return null;
+  }
   return JSON.parse(res.getContentText());
 }
 
 function supabasePatch_(table, filter, payload) {
-  const url = SUPABASE_URL + '/rest/v1/' + table + '?' + filter;
-  UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + filter, {
     method: 'PATCH',
     headers: {
       'apikey': SUPABASE_KEY,
@@ -306,11 +336,15 @@ function supabasePatch_(table, filter, payload) {
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
+  const code = res.getResponseCode();
+  if (code !== 200 && code !== 204) {
+    Logger.log('supabasePatch_ error (' + code + '): ' + res.getContentText().substring(0, 300));
+  }
+  return code;
 }
 
 function supabasePost_(table, payload) {
-  const url = SUPABASE_URL + '/rest/v1/' + table;
-  UrlFetchApp.fetch(url, {
+  const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + table, {
     method: 'POST',
     headers: {
       'apikey': SUPABASE_KEY,
@@ -321,16 +355,17 @@ function supabasePost_(table, payload) {
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
+  return res.getResponseCode();
 }
 
-// ── FADV ACTION-REQUIRED EMAIL PROCESSOR ─────────────────────────────────────
+// ── FADV ACTION-REQUIRED PROCESSOR ───────────────────────────────────────────
 const LABEL_ACTION = 'FADV/Action-Required';
 
 function processFadvActionEmails() {
-  const actionLabel = getOrCreateLabel_(LABEL_ACTION);
+  const actionLabel    = getOrCreateLabel_(LABEL_ACTION);
   const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+  const failedLabel    = getOrCreateLabel_(LABEL_FAILED);
   const threads = actionLabel.getThreads(0, 50);
-
   Logger.log('Found ' + threads.length + ' FADV Action-Required threads');
 
   let sent = 0, skipped = 0, unmatched = 0, errors = 0;
@@ -341,35 +376,27 @@ function processFadvActionEmails() {
 
     messages.forEach(function(message) {
       try {
-        const from = message.getFrom();
+        const from    = message.getFrom();
         const subject = message.getSubject();
-
         if (from.indexOf('FedEx.Support@fadv.com') === -1) { skipped++; return; }
         if (subject.indexOf('Requires Additional Information') === -1) { skipped++; return; }
 
         const body = message.getPlainBody() || message.getBody();
-
-        // Parse fields from body
-        var nameMatch = body.match(/Candidate:\s*(.+)/i);
-        var orderMatch = body.match(/Order Number:\s*(\S+)/i);
-        var linkMatch = body.match(/(https:\/\/pa\.fadv\.com\/#\/invite\/[^\s<"]+)/i);
+        var nameMatch   = body.match(/Candidate:\s*(.+)/i);
+        var orderMatch  = body.match(/Order Number:\s*(\S+)/i);
+        var linkMatch   = body.match(/(https:\/\/pa\.fadv\.com\/#\/invite\/[^\s<"]+)/i);
         var expiryMatch = body.match(/This link expires on\s+(.+)/i);
         var reasonMatch = body.match(/Requested Information[\s\S]*?(?:<\/?\w[^>]*>|\n\s*\n)([\s\S]*?)(?:Next Step|$)/i);
 
-        var candidateName = nameMatch ? nameMatch[1].trim() : '';
-        var orderNumber = orderMatch ? orderMatch[1].trim() : '';
-        var profileLink = linkMatch ? linkMatch[1].trim() : '';
-        var expiryRaw = expiryMatch ? expiryMatch[1].trim() : '';
-        var reason = '';
+        var candidateName = nameMatch  ? nameMatch[1].trim()  : '';
+        var orderNumber   = orderMatch ? orderMatch[1].trim() : '';
+        var profileLink   = linkMatch  ? linkMatch[1].trim()  : '';
+        var expiryRaw     = expiryMatch? expiryMatch[1].trim(): '';
+        var reason = reasonMatch
+          ? reasonMatch[1].replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim().substring(0,200)
+          : '';
 
-        if (reasonMatch) {
-          reason = reasonMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-          if (reason.length > 200) reason = reason.substring(0, 200);
-        }
-
-        // Format expiry date
-        var expiryFormatted = '';
-        var expiryIso = '';
+        var expiryFormatted = '', expiryIso = '';
         if (expiryRaw) {
           var expDate = new Date(expiryRaw);
           if (!isNaN(expDate.getTime())) {
@@ -378,229 +405,267 @@ function processFadvActionEmails() {
           }
         }
 
-        // Match candidate
         var candidate = null;
         if (orderNumber) {
-          var res = supabaseGet_('candidates', {
+          var r1 = supabaseGet_('candidates', {
             select: 'id,first_name,phone,background_status,fadv_action_required,fadv_action_sms_sent_at',
-            'drug_test_id': 'eq.' + orderNumber,
-            limit: 1
+            'drug_test_id': 'eq.' + orderNumber, limit: 1
           });
-          if (res && res.length > 0) candidate = res[0];
+          if (r1 && r1.length > 0) candidate = r1[0];
         }
         if (!candidate && candidateName) {
           var parts = candidateName.split(/\s+/);
           if (parts.length >= 2) {
-            var res2 = supabaseGet_('candidates', {
+            var r2 = supabaseGet_('candidates', {
               select: 'id,first_name,phone,background_status,fadv_action_required,fadv_action_sms_sent_at',
               'first_name': 'ilike.' + parts[0],
-              'last_name': 'ilike.' + parts.slice(1).join(' '),
+              'last_name':  'ilike.' + parts.slice(1).join(' '),
               limit: 1
             });
-            if (res2 && res2.length > 0) candidate = res2[0];
+            if (r2 && r2.length > 0) candidate = r2[0];
           }
         }
 
         if (!candidate) {
-          Logger.log('No candidate match for Action-Required: ' + candidateName + ' Order: ' + orderNumber);
+          Logger.log('No match for Action-Required: ' + candidateName + ' Order: ' + orderNumber);
           logToSupabase_(message.getId(), candidateName, orderNumber, 'action_required', '', '', null, 'unmatched', 0, false, 'no_candidate_match');
-          unmatched++;
-          return;
+          unmatched++; return;
         }
 
-        // Update Supabase
-        supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-          background_status: 'Needs Further Review',
+        var patchCode = supabasePatch_('candidates', 'id=eq.' + candidate.id, {
+          background_status:    'Needs Further Review',
           fadv_action_required: true,
-          fadv_action_reason: reason,
-          fadv_action_link: profileLink,
-          fadv_action_expires: expiryIso || null
+          fadv_action_reason:   reason,
+          fadv_action_link:     profileLink,
+          fadv_action_expires:  expiryIso || null
         });
 
-        // Send SMS (template 41)
+        if (patchCode !== 200 && patchCode !== 204) {
+          Logger.log('Action-Required patch failed (' + patchCode + ') for candidate ' + candidate.id);
+          errors++; threadOk = false; return;
+        }
+
         if (candidate.phone) {
           var smsBody = 'Hi ' + (candidate.first_name || '') + ', your background check is on hold.\n\n' +
             'FADV needs you to respond using this link -- do NOT reply to their email:\n' +
-            profileLink + '\n\n' +
-            'Deadline: ' + expiryFormatted + '\n\n' +
-            'Reason: ' + reason + '\n\n' +
-            'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
+            profileLink + '\n\nDeadline: ' + expiryFormatted +
+            '\n\nReason: ' + reason +
+            '\n\nKai\nPEAKrecruiting';
           sendSms_(candidate.phone, smsBody);
         }
 
-        // Mark SMS sent + seed reminder cadence
         supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-          fadv_action_required:    true,
-          fadv_action_sent_at:     new Date().toISOString(),
-          fadv_action_sms_sent_at: new Date().toISOString(),
-          fadv_action_link:        profileLink || null,
-          fadv_action_reason:      reason || null,
-          fadv_action_expires:     expiryIso || null
+          fadv_action_sms_sent_at: new Date().toISOString()
         });
-
         sent++;
       } catch(e) {
-        Logger.log('ERROR processing Action-Required message: ' + e.message);
-        errors++;
-        threadOk = false;
+        Logger.log('ERROR Action-Required message: ' + e.message);
+        errors++; threadOk = false;
       }
     });
 
+    thread.removeLabel(actionLabel);
     if (threadOk) {
-      thread.removeLabel(actionLabel);
       thread.addLabel(processedLabel);
       const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
       if (kaiInbox) thread.removeLabel(kaiInbox);
-      const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
-      if (peakInbox) thread.removeLabel(peakInbox);
       thread.markRead();
       thread.moveToArchive();
+    } else {
+      thread.addLabel(failedLabel);
     }
   });
 
-  Logger.log('Action-Required run complete -- Sent: ' + sent + ' | Skipped: ' + skipped +
+  Logger.log('Action-Required done -- Sent: ' + sent + ' | Skipped: ' + skipped +
              ' | Unmatched: ' + unmatched + ' | Errors: ' + errors);
 }
 
-// ── FADV ACTION FUP CRON (every 6 hours) ────────────────────────────────────
+// ── FADV ACTION FOLLOW-UP CRON ────────────────────────────────────────────────
 function processFadvActionFups() {
   var now = new Date();
   var nowIso = now.toISOString();
-
-  // Fetch candidates with active action-required
   var candidates = supabaseGet_('candidates', {
     select: 'id,first_name,last_name,phone,client_id,status,fadv_action_required,fadv_action_link,fadv_action_expires,fadv_action_reason,fadv_action_sms_sent_at,fadv_action_fup1_sent_at,fadv_action_fup2_sent_at,fadv_action_fup3_sent_at',
     'fadv_action_required': 'eq.true',
-    'fadv_action_expires': 'gt.' + nowIso,
-    'status': 'not.in.(Rejected,Hired)',
+    'fadv_action_expires':  'gt.' + nowIso,
+    'status':               'not.in.(Rejected,Hired)',
     limit: 200
   });
 
-  if (!candidates || candidates.length === 0) {
-    Logger.log('No active FADV action-required candidates');
-    return;
-  }
+  if (!candidates || candidates.length === 0) { Logger.log('No active action-required candidates'); return; }
 
   var fup1 = 0, fup2 = 0, fup3 = 0, escalated = 0;
 
   candidates.forEach(function(c) {
     if (!c.fadv_action_sms_sent_at || !c.phone) return;
-
     var sentAt = new Date(c.fadv_action_sms_sent_at);
-    var daysSince = (now.getTime() - sentAt.getTime()) / (1000 * 60 * 60 * 24);
-
+    var daysSince = (now - sentAt) / (1000 * 60 * 60 * 24);
     var link = c.fadv_action_link || '';
-    var expiryFormatted = '';
-    if (c.fadv_action_expires) {
-      var expDate = new Date(c.fadv_action_expires);
-      expiryFormatted = Utilities.formatDate(expDate, Session.getScriptTimeZone(), 'MMMM d, yyyy');
-    }
+    var expiryFormatted = c.fadv_action_expires
+      ? Utilities.formatDate(new Date(c.fadv_action_expires), Session.getScriptTimeZone(), 'MMMM d, yyyy')
+      : '';
 
     if (daysSince >= 4 && c.fadv_action_fup1_sent_at && c.fadv_action_fup2_sent_at && c.fadv_action_fup3_sent_at) {
-      // Escalate: all FUPs sent, no response after 4 days
       supabasePost_('action_items', {
-        priority: '🔴',
-        category: 'OPS',
-        task: 'FADV action required -- no response after 3 FUPs: ' + (c.first_name || '') + ' ' + (c.last_name || '') + ' (' + (c.client_id || '') + ')',
-        status: 'OPEN'
+        priority: '🔴', domain: 'PEAK Ops', category: 'OPS',
+        task: 'FADV action -- no response after 3 FUPs: ' + (c.first_name||'') + ' ' + (c.last_name||'') + ' (' + (c.client_id||'') + ')',
+        status: 'PENDING'
       });
       escalated++;
-
     } else if (daysSince >= 3 && !c.fadv_action_fup3_sent_at) {
-      // FUP 3 (template 44)
-      var body3 = (c.first_name || '') + ', final reminder. Your background check cannot move forward until you respond to FADV.\n\n' +
-        'Deadline: ' + expiryFormatted + '\n' + link + '\n\n' +
-        'Reply here if you need help.\n\n' +
-        'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
-      sendSms_(c.phone, body3);
+      sendSms_(c.phone, (c.first_name||'') + ', final reminder. Background check cannot move forward until you respond to FADV.\n\nDeadline: ' + expiryFormatted + '\n' + link + '\n\nReply if you need help.\n\nKai\nPEAKrecruiting');
       supabasePatch_('candidates', 'id=eq.' + c.id, { fadv_action_fup3_sent_at: nowIso });
       fup3++;
-
     } else if (daysSince >= 2 && !c.fadv_action_fup2_sent_at) {
-      // FUP 2 (template 43)
-      var body2 = (c.first_name || '') + ', second reminder -- background check still on hold. Deadline is ' + expiryFormatted + ':\n' + link + '\n\n' +
-        'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
-      sendSms_(c.phone, body2);
+      sendSms_(c.phone, (c.first_name||'') + ', second reminder -- background check still on hold. Deadline: ' + expiryFormatted + '\n' + link + '\n\nKai\nPEAKrecruiting');
       supabasePatch_('candidates', 'id=eq.' + c.id, { fadv_action_fup2_sent_at: nowIso });
       fup2++;
-
     } else if (daysSince >= 1 && !c.fadv_action_fup1_sent_at) {
-      // FUP 1 (template 42)
-      var body1 = (c.first_name || '') + ', your background check is still on hold.\n\n' +
-        'FADV is waiting on your response. Deadline is ' + expiryFormatted + ':\n' + link + '\n\n' +
-        'Kai\nPEAKrecruiting\nQuestions? (470) 857-4325';
-      sendSms_(c.phone, body1);
+      sendSms_(c.phone, (c.first_name||'') + ', your background check is still on hold.\n\nFADV is waiting on your response. Deadline: ' + expiryFormatted + '\n' + link + '\n\nKai\nPEAKrecruiting');
       supabasePatch_('candidates', 'id=eq.' + c.id, { fadv_action_fup1_sent_at: nowIso });
       fup1++;
     }
   });
 
-  Logger.log('FUP run complete -- FUP1: ' + fup1 + ' | FUP2: ' + fup2 + ' | FUP3: ' + fup3 + ' | Escalated: ' + escalated);
+  Logger.log('FUP done -- FUP1: ' + fup1 + ' | FUP2: ' + fup2 + ' | FUP3: ' + fup3 + ' | Escalated: ' + escalated);
 }
 
-// ── TWILIO SMS HELPER ───────────────────────────────────────────────────────
+// ── TWILIO SMS ────────────────────────────────────────────────────────────────
 function sendSms_(toPhone, body) {
   var props = PropertiesService.getScriptProperties();
-  var sid = props.getProperty('TWILIO_ACCOUNT_SID');
+  var sid   = props.getProperty('TWILIO_ACCOUNT_SID');
   var token = props.getProperty('TWILIO_AUTH_TOKEN');
-  var fromNumber = props.getProperty('TWILIO_FROM_NUMBER');
-
-  if (!sid || !token || !fromNumber) {
-    Logger.log('Twilio credentials not set in Script Properties');
-    return;
-  }
-
-  // Format phone: strip non-digits, prepend +1
-  var digits = toPhone.replace(/\D/g, '');
+  var from  = props.getProperty('TWILIO_FROM_NUMBER');
+  if (!sid || !token || !from) { Logger.log('Twilio credentials missing'); return; }
+  var digits = toPhone.replace(/\D/g,'');
   if (digits.length === 10) digits = '1' + digits;
-  var formatted = '+' + digits;
-
-  var url = 'https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages.json';
-  var authHeader = 'Basic ' + Utilities.base64Encode(sid + ':' + token);
-
-  try {
-    var res = UrlFetchApp.fetch(url, {
-      method: 'POST',
-      headers: { 'Authorization': authHeader },
-      payload: {
-        'To': formatted,
-        'From': fromNumber,
-        'Body': body
-      },
-      muteHttpExceptions: true
-    });
-    var code = res.getResponseCode();
-    if (code >= 200 && code < 300) {
-      Logger.log('SMS sent to ' + formatted);
-    } else {
-      Logger.log('SMS failed (' + code + ') to ' + formatted + ': ' + res.getContentText());
-    }
-  } catch(e) {
-    Logger.log('SMS error to ' + formatted + ': ' + e.message);
-  }
+  var res = UrlFetchApp.fetch('https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages.json', {
+    method: 'POST',
+    headers: { 'Authorization': 'Basic ' + Utilities.base64Encode(sid + ':' + token) },
+    payload: { 'To': '+' + digits, 'From': from, 'Body': body },
+    muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  if (code < 200 || code >= 300) Logger.log('SMS failed (' + code + '): ' + res.getContentText().substring(0,200));
+  else Logger.log('SMS sent to +' + digits);
 }
 
 // ── LABEL HELPER ─────────────────────────────────────────────────────────────
-function getOrCreateLabel_(labelName) {
-  let label = GmailApp.getUserLabelByName(labelName);
-  if (!label) label = GmailApp.createLabel(labelName);
-  return label;
+function getOrCreateLabel_(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
 }
 
-// ── ONE-TIME BACKLOG PROCESSOR ────────────────────────────────────────────────
-// Run this ONCE manually to label already-processed backlog emails
+// ── ONE-TIME BACKLOG UTILS ────────────────────────────────────────────────────
 function labelBacklog() {
   const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
   const threads = GmailApp.search('from:EntAdv.DoNotReply@fadv.com -label:FADV/Pending -label:FADV/Processed');
-  Logger.log('Backlog threads to label: ' + threads.length);
-  threads.forEach(function(thread) {
-    thread.addLabel(processedLabel);
-    const kaiInbox = GmailApp.getUserLabelByName('Kai/Inbox');
-    if (kaiInbox) thread.removeLabel(kaiInbox);
-    const peakInbox = GmailApp.getUserLabelByName('PEAK/Inbox');
-    if (peakInbox) thread.removeLabel(peakInbox);
-    thread.markRead();
-    thread.moveToArchive();
+  Logger.log('Backlog threads: ' + threads.length);
+  threads.forEach(function(t) { t.addLabel(processedLabel); t.markRead(); t.moveToArchive(); });
+  Logger.log('Done');
+}
+
+function processBacklogNow() {
+  const pendingLabel = getOrCreateLabel_(LABEL_PENDING);
+  const threads = GmailApp.search('from:EntAdv.DoNotReply@fadv.com -label:FADV/Pending -label:FADV/Processed');
+  Logger.log('Backlog threads found: ' + threads.length);
+  threads.forEach(function(t) { t.addLabel(pendingLabel); });
+  Logger.log('All labeled FADV/Pending -- running parser');
+  processFadvEmails();
+}
+
+// ── RETRY FAILED EMAILS ───────────────────────────────────────────────────────
+function retryFailed() {
+  const failedLabel  = getOrCreateLabel_(LABEL_FAILED);
+  const pendingLabel = getOrCreateLabel_(LABEL_PENDING);
+  const threads = failedLabel.getThreads(0, 50);
+  Logger.log('Retrying ' + threads.length + ' failed threads');
+  threads.forEach(function(t) {
+    t.removeLabel(failedLabel);
+    t.addLabel(pendingLabel);
   });
-  Logger.log('Backlog labeled complete');
+  if (threads.length > 0) processFadvEmails();
+}
+
+// ── FADV PROFILE COMPLETION PARSER ───────────────────────────────────────────
+// Fires when candidate completes their FADV profile (before Kai approves in portal)
+// Action: SMS Kai with candidate name + FADV account to log into
+// Does NOT SMS the candidate -- that happens when "In Progress" email arrives
+function processFadvProfileCompletions() {
+  var SEARCH_QUERY = 'from:do_not_reply@fadv.com subject:"Application Completed Notification" -label:FADV/Processed';
+  var processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+
+  var CLIENT_MAP = {
+    'cbm':                     'CBM Logistics (042443PWO)',
+    'cnf_services':            'CNF Services (042443/V0009926)',
+    'gods_vision':             'Gods Vision (042443JVP)',
+    'legacy_chattanooga':      'Legacy Logistics (042443HNB)',
+    'legacy_tuscaloosa':       'Legacy Logistics (042443HNB)',
+    'legacy_chattanooga_east': 'Legacy Logistics (042443HNB)',
+    'solpac':                  'Solpac (042443sdp)'
+  };
+
+  var KAI_PHONE = '4043862799';
+
+  var threads = GmailApp.search(SEARCH_QUERY, 0, 50);
+  Logger.log('[FadvProfile] Found ' + threads.length + ' completion email(s).');
+  if (!threads.length) return;
+
+  threads.forEach(function(thread) {
+    var msg  = thread.getMessages()[0];
+    var body = msg.getPlainBody();
+
+    // Email format: "Brandon Anthony (email@...) completed their online profile"
+    var nameEmailMatch = body.match(/([A-Za-z\s]+?)\s*\(([^\)]+)\)\s+completed/);
+    var candName  = nameEmailMatch ? nameEmailMatch[1].trim() : null;
+    var candEmail = nameEmailMatch ? nameEmailMatch[2].trim().toLowerCase() : null;
+
+    Logger.log('[FadvProfile] Name: ' + candName + ' | Email: ' + candEmail);
+
+    var candidate = null;
+    if (candEmail) {
+      var r1 = supabaseGet_('candidates', { 'personal_email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+      if (r1 && r1.length) candidate = r1[0];
+      if (!candidate) {
+        var r2 = supabaseGet_('candidates', { 'email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+        if (r2 && r2.length) candidate = r2[0];
+      }
+    }
+    if (!candidate && candName) {
+      var parts = candName.split(/\s+/);
+      if (parts.length >= 2) {
+        var r3 = supabaseGet_('candidates', { 'first_name': 'ilike.' + parts[0], 'last_name': 'ilike.' + parts[parts.length-1], 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+        if (r3 && r3.length) candidate = r3[0];
+      }
+    }
+
+    if (!candidate) {
+      Logger.log('[FadvProfile] No match for: ' + candName + ' / ' + candEmail);
+      supabasePost_('forge_memory', {
+        session_date: new Date().toISOString().split('T')[0],
+        category: 'unmatched_fadv_completion',
+        subject: 'Unmatched FADV profile completion: ' + candName,
+        content: 'Name: ' + candName + ' | Email: ' + candEmail,
+        target_thread: 'PEAK Ops'
+      });
+      thread.addLabel(processedLabel);
+      return;
+    }
+
+    var company  = CLIENT_MAP[candidate.client_id] || candidate.client_id || 'Unknown client';
+    var fullName = (candidate.first_name || '') + ' ' + (candidate.last_name || '');
+
+    // SMS Kai to approve in FADV portal
+    sendSms_(KAI_PHONE, fullName.trim() + ' -- ' + company + ' -- FADV profile ready. Log in to approve.');
+    Logger.log('[FadvProfile] SMS sent to Kai for ' + fullName);
+
+    // Stamp profile completed timestamp
+    var now = new Date().toISOString();
+    supabasePatch_('candidates', 'id=eq.' + candidate.id, {
+      fadv_profile_completed_at: now,
+      updated_at: now
+    });
+
+    thread.addLabel(processedLabel);
+    Logger.log('[FadvProfile] Done: ' + fullName);
+  });
 }
