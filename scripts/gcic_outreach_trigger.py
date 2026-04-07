@@ -120,10 +120,9 @@ def run_gcic_outreach():
 
     # Query candidates needing outreach
     candidates = sb_get('candidates', {
-        'select': 'id,first_name,last_name,client_id,phone,created_at',
+        'select': 'id,first_name,last_name,client_id,phone,created_at,gcic_status,gcic_outreach_sent_at',
         'background_status': 'in.(In Progress,Needs Further Review)',
-        'or': '(gcic_text_sent.is.null,gcic_text_sent.eq.0)',
-        'and': '(gcic_stage.is.null,gcic_stage.eq.)',
+        'or': '(gcic_outreach_sent_at.is.null,gcic_status.eq.NOT_SENT)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
         'phone': 'neq.0000000000',
         'order': 'id.asc'
