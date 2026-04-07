@@ -88,6 +88,13 @@ function processSignedGCICEmails() {
 
     Logger.log('[GCIC] Matched: ' + candidate.id + ' -- ' + candidate.first_name + ' ' + candidate.last_name + ' (' + candidate.client_id + ')');
 
+    // Fix 4: Idempotency -- skip if already submitted to FADV
+    if (candidate.gcic_stage === 'SUBMITTED_TO_FADV') {
+      Logger.log('[GCIC] Already submitted to FADV -- skipping duplicate: ' + candidate.id);
+      moveThread_(thread, pendingLabel, processedLabel, null);
+      return;
+    }
+
     // Update Supabase
     var now  = new Date().toISOString();
     var code = sbPatch_g('candidates', 'id=eq.' + candidate.id, {
@@ -172,7 +179,7 @@ function findCandidateFuzzy_(rawName) {
       var r = sbGet_g('candidates', {
         'first_name': 'ilike.' + tryFirst,
         'last_name':  'ilike.' + tryLast,
-        'select':     'id,first_name,last_name,phone,client_id',
+        'select':     'id,first_name,last_name,phone,client_id,gcic_stage',
         'limit':      '1'
       });
       if (r && r.length) return r[0];
@@ -188,7 +195,7 @@ function findCandidateFuzzy_(rawName) {
   var r1 = sbGet_g('candidates', {
     'first_name': 'ilike.' + first,
     'last_name':  'ilike.' + last,
-    'select':     'id,first_name,last_name,phone,client_id',
+    'select':     'id,first_name,last_name,phone,client_id,gcic_stage',
     'limit':      '1'
   });
   if (r1 && r1.length) return r1[0];
@@ -198,7 +205,7 @@ function findCandidateFuzzy_(rawName) {
     var r2 = sbGet_g('candidates', {
       'first_name': 'ilike.' + first,
       'last_name':  'ilike.' + parts[j],
-      'select':     'id,first_name,last_name,phone,client_id',
+      'select':     'id,first_name,last_name,phone,client_id,gcic_stage',
       'limit':      '1'
     });
     if (r2 && r2.length) return r2[0];
@@ -210,7 +217,7 @@ function findCandidateFuzzy_(rawName) {
 function sbFindByFirst_(first) {
   var r = sbGet_g('candidates', {
     'first_name': 'ilike.' + first,
-    'select':     'id,first_name,last_name,phone,client_id',
+    'select':     'id,first_name,last_name,phone,client_id,gcic_stage',
     'limit':      '1'
   });
   return r && r.length ? r[0] : null;
