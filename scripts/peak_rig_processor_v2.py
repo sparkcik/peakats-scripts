@@ -203,14 +203,10 @@ class ResumeProcessor:
                     print(f"  ⚠️  Candidate already exists (ID: {existing[0]})")
                     return False
                 
-                # Determine status from RWP score
+                # Status at insert is always Intake -- scorer does not set Active
+                # FADV submission is the only thing that sets Active
                 rwp_score = resume_data['rwp_score']
-                if rwp_score >= 3:
-                    new_status = 'Active'
-                elif rwp_score == 1:
-                    new_status = 'Rejected'
-                else:
-                    new_status = 'No Resume'
+                new_status = 'Intake'
 
                 conn.execute(text("""
                     INSERT INTO candidates (
@@ -536,15 +532,13 @@ class ResumeProcessor:
                 "id": candidate_id,
             }
 
-            # Promote from No Resume based on score
-            if current_status == 'No Resume' and rwp_score is not None:
-                if rwp_score >= 3:
-                    set_clauses.append("status = 'Active'")
-                    print(f"  ⬆️  Status promoted: No Resume → Active (rwp_score={rwp_score})")
-                elif rwp_score == 1:
-                    set_clauses.append("status = 'Rejected'")
-                    set_clauses.append("reject_reason = 'low_rwp'")
-                    print(f"  ⬇️  Status set: No Resume → Rejected (rwp_score=1, low_rwp)")
+            # Scorer does NOT change status -- only updates RWP fields
+            # status = Active is set only at FADV submission
+            # Reject low-score candidates regardless of current status
+            if rwp_score == 1 and current_status == 'Intake':
+                set_clauses.append("status = 'Rejected'")
+                set_clauses.append("reject_reason = 'low_rwp'")
+                print(f"  ⬇️  Rejected: low_rwp (rwp_score=1)")
 
             # Back-fill tag if missing
             if current_tag is None:
