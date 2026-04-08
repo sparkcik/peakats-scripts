@@ -2,8 +2,13 @@
 """
 twilio_webhook.py -- Inbound SMS webhook handler for Twilio
 
-Flask app that receives Twilio inbound SMS POSTs, matches candidates,
-logs to candidate_comms, and returns TwiML 200.
+Flask app that receives Twilio inbound SMS POSTs, matches candidates
+and contacts, logs to sms_triage_queue, and returns TwiML 200.
+
+Match priority:
+  1. candidates table (by phone)
+  2. contacts table (clients, AOs, BCs -- by phone)
+  3. unmatched
 
 Port: 8080 (standalone) -- but see NOTE below.
 
@@ -68,6 +73,46 @@ def match_candidate(phone):
     rows = resp.json()
     return rows[0] if rows else None
 
+# -- Contact matching (clients, AOs, BCs) ----------------------------------------
+
+def match_contact(phone):
+    clean = clean_phone(phone)
+    resp = requests.get(
+        f"{SUPABASE_URL}/rest/v1/contacts",
+        headers=SB_HEADERS,
+        params={
+            "phone": f"eq.{clean}",
+            "select": "id,first_name,last_name,company,contact_type,client_ids",
+        },
+    )
+    resp.raise_for_status()
+    rows = resp.json()
+    return rows[0] if rows else None
+
+# -- Logging to sms_triage_queue -------------------------------------------------
+
+def log_to_triage(from_number, body, category, candidate_id=None, contact_id=None):
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "from_number": clean_phone(from_number),
+        "body": body,
+        "category": category,
+        "received_at": now,
+    }
+    if candidate_id:
+        payload["candidate_id"] = candidate_id
+    if contact_id:
+        payload["contact_id"] = contact_id
+    resp = requests.post(
+        f"{SUPABASE_URL}/rest/v1/sms_triage_queue",
+        headers={**SB_HEADERS, "Prefer": "return=minimal"},
+        json=payload,
+    )
+    if resp.status_code >= 400:
+        log.error(f"Failed to log triage: {resp.status_code} {resp.text[:200]}")
+    else:
+        log.info(f"Triage logged: {from_number} category={category}")
+
 # -- Logging to candidate_comms --------------------------------------------------
 
 def log_inbound_sms(from_number, body, candidate):
@@ -109,13 +154,23 @@ def inbound_sms():
 
     log.info(f"Inbound SMS from {from_number}: {body[:80]}")
 
+    # 1. Match candidate
     candidate = match_candidate(from_number)
-
     if candidate:
         log_inbound_sms(from_number, body, candidate)
-    else:
-        log.warning(f"No candidate match for {from_number}")
+        log_to_triage(from_number, body, category="candidate", candidate_id=candidate["id"])
+        return Response(TWIML_OK, mimetype="application/xml")
 
+    # 2. Match contact (client, AO, BC)
+    contact = match_contact(from_number)
+    if contact:
+        log_to_triage(from_number, body, category="contact", contact_id=contact["id"])
+        log.info(f"Contact match: {from_number} -> {contact.get('company', '')} ({contact.get('contact_type', '')})")
+        return Response(TWIML_OK, mimetype="application/xml")
+
+    # 3. No match
+    log.warning(f"No match for {from_number} -- logged as unmatched")
+    log_to_triage(from_number, body, category="unmatched")
     return Response(TWIML_OK, mimetype="application/xml")
 
 
