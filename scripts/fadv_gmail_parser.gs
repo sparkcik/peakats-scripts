@@ -586,10 +586,15 @@ function retryFailed() {
   if (threads.length > 0) processFadvEmails();
 }
 
-// ── FADV PROFILE COMPLETION PARSER ───────────────────────────────────────────
-// Fires when candidate completes their FADV profile (before Kai approves in portal)
-// Action: SMS Kai with candidate name + FADV account to log into
-// Does NOT SMS the candidate -- that happens when "In Progress" email arrives
+// ── FADV PROFILE COMPLETION PARSER v2 ────────────────────────────────────────
+// Fires when candidate completes their FADV profile
+// Upgrades per Ops spec:
+//   - Sets background_status = 'In Progress'
+//   - Stamps fadv_profile_completed_at from email date (NOT NOW())
+//   - If fadv_submitted_at is NULL, stamps it from email date (AO submitted directly)
+//   - Creates TECH_FADV action item for portal approval
+//   - SMS to Kai as secondary notification
+//   - Unmatched: creates CANDIDATE_OPS action item
 function processFadvProfileCompletions() {
   var SEARCH_QUERY = 'from:do_not_reply@fadv.com subject:"Application Completed Notification" -label:FADV/Processed';
   var processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
@@ -611,41 +616,44 @@ function processFadvProfileCompletions() {
   if (!threads.length) return;
 
   threads.forEach(function(thread) {
-    var msg  = thread.getMessages()[0];
-    var body = msg.getPlainBody();
+    var msg      = thread.getMessages()[0];
+    var body     = msg.getPlainBody();
+    var emailDate = msg.getDate().toISOString(); // use email date, not NOW()
 
     // Email format: "Brandon Anthony (email@...) completed their online profile"
     var nameEmailMatch = body.match(/([A-Za-z\s]+?)\s*\(([^\)]+)\)\s+completed/);
     var candName  = nameEmailMatch ? nameEmailMatch[1].trim() : null;
     var candEmail = nameEmailMatch ? nameEmailMatch[2].trim().toLowerCase() : null;
 
-    Logger.log('[FadvProfile] Name: ' + candName + ' | Email: ' + candEmail);
+    Logger.log('[FadvProfile] Name: ' + candName + ' | Email: ' + candEmail + ' | Date: ' + emailDate);
 
+    // Match candidate
     var candidate = null;
     if (candEmail) {
-      var r1 = supabaseGet_('candidates', { 'personal_email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+      var r1 = supabaseGet_('candidates', { 'personal_email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id,fadv_submitted_at,background_status', 'limit': '1' });
       if (r1 && r1.length) candidate = r1[0];
       if (!candidate) {
-        var r2 = supabaseGet_('candidates', { 'email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+        var r2 = supabaseGet_('candidates', { 'email': 'eq.' + candEmail, 'select': 'id,first_name,last_name,phone,client_id,fadv_submitted_at,background_status', 'limit': '1' });
         if (r2 && r2.length) candidate = r2[0];
       }
     }
     if (!candidate && candName) {
       var parts = candName.split(/\s+/);
       if (parts.length >= 2) {
-        var r3 = supabaseGet_('candidates', { 'first_name': 'ilike.' + parts[0], 'last_name': 'ilike.' + parts[parts.length-1], 'select': 'id,first_name,last_name,phone,client_id', 'limit': '1' });
+        var r3 = supabaseGet_('candidates', { 'first_name': 'ilike.' + parts[0], 'last_name': 'ilike.' + parts[parts.length-1], 'select': 'id,first_name,last_name,phone,client_id,fadv_submitted_at,background_status', 'limit': '1' });
         if (r3 && r3.length) candidate = r3[0];
       }
     }
 
+    // Unmatched -- create CANDIDATE_OPS action item
     if (!candidate) {
       Logger.log('[FadvProfile] No match for: ' + candName + ' / ' + candEmail);
-      supabasePost_('forge_memory', {
-        session_date: new Date().toISOString().split('T')[0],
-        category: 'unmatched_fadv_completion',
-        subject: 'Unmatched FADV profile completion: ' + candName,
-        content: 'Name: ' + candName + ' | Email: ' + candEmail,
-        target_thread: 'PEAK Ops'
+      supabasePost_('action_items', {
+        task: 'Unmatched FADV completion: ' + candName + ' -- identify and add to Supabase. Email: ' + candEmail,
+        priority: '🟡',
+        category: 'CANDIDATE_OPS',
+        domain: 'PEAK Ops',
+        status: 'PENDING'
       });
       thread.addLabel(processedLabel);
       return;
@@ -654,16 +662,39 @@ function processFadvProfileCompletions() {
     var company  = CLIENT_MAP[candidate.client_id] || candidate.client_id || 'Unknown client';
     var fullName = (candidate.first_name || '') + ' ' + (candidate.last_name || '');
 
-    // SMS Kai to approve in FADV portal
-    sendSms_(KAI_PHONE, fullName.trim() + ' -- ' + company + ' -- FADV profile ready. Log in to approve.');
-    Logger.log('[FadvProfile] SMS sent to Kai for ' + fullName);
+    // Build patch payload
+    var patch = {
+      background_status:        'In Progress',
+      fadv_profile_completed_at: emailDate,
+      updated_at:               new Date().toISOString()
+    };
 
-    // Stamp profile completed timestamp
-    var now = new Date().toISOString();
-    supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-      fadv_profile_completed_at: now,
-      updated_at: now
+    // If fadv_submitted_at is NULL, AO submitted directly -- stamp from email date
+    if (!candidate.fadv_submitted_at) {
+      patch.fadv_submitted_at = emailDate;
+      Logger.log('[FadvProfile] fadv_submitted_at was null -- stamping from email date (AO direct submit)');
+    }
+
+    var code = supabasePatch_('candidates', 'id=eq.' + candidate.id, patch);
+    if (code !== 200 && code !== 204) {
+      Logger.log('[FadvProfile] ERROR: Supabase patch failed (' + code + ') for candidate ' + candidate.id);
+      alertForge_('[FadvProfile] write failed: ' + fullName, 'Patch returned ' + code + ' for candidate ' + candidate.id);
+    } else {
+      Logger.log('[FadvProfile] Supabase updated: ' + fullName + ' -> In Progress');
+    }
+
+    // Create TECH_FADV action item for portal approval
+    supabasePost_('action_items', {
+      task: 'FADV portal approval needed: ' + fullName.trim() + ' (' + (candidate.client_id || 'unknown') + ') -- log into ' + company + ' to approve.',
+      priority: '🔴',
+      category: 'TECH_FADV',
+      domain: 'PEAK Ops',
+      status: 'PENDING'
     });
+
+    // SMS Kai
+    sendSms_(KAI_PHONE, fullName.trim() + ' -- ' + company + ' -- FADV profile ready. Log in to approve.');
+    Logger.log('[FadvProfile] SMS + action item created for ' + fullName);
 
     thread.addLabel(processedLabel);
     Logger.log('[FadvProfile] Done: ' + fullName);
