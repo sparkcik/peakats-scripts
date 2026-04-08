@@ -700,3 +700,174 @@ function processFadvProfileCompletions() {
     Logger.log('[FadvProfile] Done: ' + fullName);
   });
 }
+
+// ── SAP CANCELLATION PARSER ───────────────────────────────────────────────────
+// Watches: Fedex.notifications@fadv.com subject "FedEx Order Cancellation - SAP"
+// Action: set Ineligible/Rejected, create CANDIDATE_OPS action item
+function processSAPCancellations() {
+  var SAP_LABEL    = 'FADV/Pending';
+  var processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+  var failedLabel    = getOrCreateLabel_(LABEL_FAILED);
+
+  var threads = GmailApp.search(
+    'from:Fedex.notifications@fadv.com subject:"FedEx Order Cancellation - SAP" -label:FADV/Processed',
+    0, 50
+  );
+  Logger.log('[SAP] Found ' + threads.length + ' SAP cancellation(s).');
+  if (!threads.length) return;
+
+  threads.forEach(function(thread) {
+    var msg  = thread.getMessages()[0];
+    var body = msg.getPlainBody() || msg.getBody();
+    var subj = msg.getSubject();
+
+    // Extract candidate name from subject or body
+    var nameMatch = subj.match(/SAP[:\s]+(.+)/i) || body.match(/Candidate[:\s]+(.+)/i) || body.match(/Name[:\s]+(.+)/i);
+    var candName  = nameMatch ? nameMatch[1].trim() : '';
+
+    Logger.log('[SAP] Candidate: ' + candName);
+
+    // Match candidate
+    var candidate = null;
+    if (candName) {
+      var parts = candName.split(/\s+/);
+      if (parts.length >= 2) {
+        var r1 = supabaseGet_('candidates', {
+          'first_name': 'ilike.' + parts[0],
+          'last_name':  'ilike.' + parts[parts.length - 1],
+          'select':     'id,first_name,last_name,client_id,phone',
+          'limit':      '1'
+        });
+        if (r1 && r1.length) candidate = r1[0];
+      }
+    }
+
+    if (!candidate) {
+      Logger.log('[SAP] No match for: ' + candName);
+      supabasePost_('action_items', {
+        task: 'SAP cancellation -- unmatched candidate: ' + candName + ' -- find and update manually.',
+        priority: '🔴',
+        category: 'CANDIDATE_OPS',
+        domain: 'PEAK Ops',
+        status: 'PENDING'
+      });
+      thread.addLabel(processedLabel);
+      return;
+    }
+
+    var fullName = (candidate.first_name || '') + ' ' + (candidate.last_name || '');
+
+    // Set Ineligible + Rejected
+    var code = supabasePatch_('candidates', 'id=eq.' + candidate.id, {
+      background_status: 'Ineligible',
+      status:            'Rejected',
+      reject_reason:     'SAP_disqualification',
+      updated_at:        new Date().toISOString()
+    });
+
+    if (code !== 200 && code !== 204) {
+      Logger.log('[SAP] ERROR: patch failed (' + code + ') for ' + candidate.id);
+      thread.addLabel(failedLabel);
+      return;
+    }
+
+    Logger.log('[SAP] Rejected: ' + fullName + ' (SAP disqualification)');
+
+    // Create CANDIDATE_OPS action item to notify AO
+    supabasePost_('action_items', {
+      task: 'SAP cancellation -- notify AO: ' + fullName.trim() + ' (' + (candidate.client_id || 'unknown') + ') -- SAP disqualification from FADV.',
+      priority: '🔴',
+      category: 'CANDIDATE_OPS',
+      domain: 'PEAK Ops',
+      status: 'PENDING'
+    });
+
+    thread.addLabel(processedLabel);
+    Logger.log('[SAP] Done: ' + fullName);
+  });
+}
+
+// ── FORMFOX DRUG ORDER PARSER ─────────────────────────────────────────────────
+// Watches: DoNotReply@noti.fadv.com (FormFox drug orders)
+// Action: stamp drug_screen_ordered_at, note 5-day collection window
+function processFormFoxOrders() {
+  var processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
+  var failedLabel    = getOrCreateLabel_(LABEL_FAILED);
+
+  var threads = GmailApp.search(
+    'from:DoNotReply@noti.fadv.com -label:FADV/Processed',
+    0, 50
+  );
+  Logger.log('[FormFox] Found ' + threads.length + ' FormFox order(s).');
+  if (!threads.length) return;
+
+  threads.forEach(function(thread) {
+    var msg  = thread.getMessages()[0];
+    var body = msg.getPlainBody() || msg.getBody();
+    var emailDate = msg.getDate().toISOString();
+
+    // Extract candidate name and order number
+    var nameMatch  = body.match(/(?:Donor|Candidate|Name)[:\s]+([A-Za-z\s,]+)/i);
+    var orderMatch = body.match(/(?:Order|Specimen|ID)[:\s#]+([A-Z0-9\-]+)/i);
+
+    var candName    = nameMatch  ? nameMatch[1].trim()  : '';
+    var orderNumber = orderMatch ? orderMatch[1].trim() : '';
+
+    Logger.log('[FormFox] Name: ' + candName + ' | Order: ' + orderNumber);
+
+    // Match candidate
+    var candidate = null;
+    if (orderNumber) {
+      var r1 = supabaseGet_('candidates', {
+        'drug_test_id': 'eq.' + orderNumber,
+        'select':       'id,first_name,last_name,client_id,phone',
+        'limit':        '1'
+      });
+      if (r1 && r1.length) candidate = r1[0];
+    }
+    if (!candidate && candName) {
+      var parts = candName.replace(/,/g, '').split(/\s+/);
+      if (parts.length >= 2) {
+        var r2 = supabaseGet_('candidates', {
+          'first_name': 'ilike.' + parts[0],
+          'last_name':  'ilike.' + parts[parts.length - 1],
+          'select':     'id,first_name,last_name,client_id,phone',
+          'limit':      '1'
+        });
+        if (r2 && r2.length) candidate = r2[0];
+      }
+    }
+
+    if (!candidate) {
+      Logger.log('[FormFox] No match: ' + candName + ' / ' + orderNumber);
+      supabasePost_('action_items', {
+        task: 'FormFox drug order -- unmatched: ' + candName + ' Order: ' + orderNumber + ' -- 5 days to report to collection site.',
+        priority: '🟡',
+        category: 'CANDIDATE_OPS',
+        domain: 'PEAK Ops',
+        status: 'PENDING'
+      });
+      thread.addLabel(processedLabel);
+      return;
+    }
+
+    var fullName = (candidate.first_name || '') + ' ' + (candidate.last_name || '');
+
+    // Stamp drug_screen_ordered_at from email date
+    var patch = {
+      drug_screen_ordered_at: emailDate,
+      updated_at:             new Date().toISOString()
+    };
+    if (orderNumber) patch.drug_test_id = orderNumber;
+
+    var code = supabasePatch_('candidates', 'id=eq.' + candidate.id, patch);
+    if (code !== 200 && code !== 204) {
+      Logger.log('[FormFox] ERROR: patch failed (' + code + ') for ' + candidate.id);
+      thread.addLabel(failedLabel);
+      return;
+    }
+
+    Logger.log('[FormFox] Stamped drug_screen_ordered_at for ' + fullName + ' -- 5 days to report.');
+    thread.addLabel(processedLabel);
+  });
+}
