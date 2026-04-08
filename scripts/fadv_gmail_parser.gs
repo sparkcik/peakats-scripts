@@ -144,7 +144,13 @@ function processMessage_(message) {
     return 'unmatched';
   }
 
-  const candidate = findCandidate_(cid, candidateName, emailType);
+  // Extract FADV account ID from email body for client scoping
+  const fadvAccountMatch = body.match(/Account[:\s#]+([A-Z0-9]+)/i) ||
+                           body.match(/CSP[:\s#]+([A-Z0-9]+)/i) ||
+                           body.match(/042443([A-Z0-9]+)/i);
+  const fadvAccountId = fadvAccountMatch ? fadvAccountMatch[0].replace(/Account[:\s#]+|CSP[:\s#]+/i,'').trim() : null;
+
+  const candidate = findCandidate_(cid, candidateName, emailType, fadvAccountId);
   if (!candidate) {
     Logger.log('No candidate match: ' + candidateName + ' CID: ' + cid);
     logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus, null, 'unmatched', 0, false, 'no_candidate_match');
@@ -178,19 +184,38 @@ function processMessage_(message) {
   return 'updated';
 }
 
-// ── FIND CANDIDATE ───────────────────────────────────────────────────────────
-function findCandidate_(cid, name, emailType) {
+// ── FADV ACCOUNT TO CLIENT MAP ───────────────────────────────────────────────
+const FADV_ACCOUNT_TO_CLIENT = {
+  '042443JVP': 'gods_vision',
+  '042443HNB': 'legacy_chattanooga',
+  '042443PWO': 'cbm',
+  'V0027018':  'cbm',
+  'V0009926':  'cnf_services',
+  '042443sdp': 'solpac',
+};
+
+// ── NAME NORMALIZATION (strips suffixes, lowercases) ─────────────────────────
+function normalizeName_(name) {
+  if (!name) return '';
+  return name.trim()
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv|v|esq\.?)\b/gi, '')
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// ── FIND CANDIDATE v3.2 -- fuzzy name + client scope ─────────────────────────
+function findCandidate_(cid, name, emailType, fadvAccountId) {
+  // 1. CID match -- most reliable
   if (cid) {
-    const cidField = emailType === 'background' ? 'background_id' : 'drug_test_id';
-    const res = supabaseGet_('candidates', {
+    var cidField = emailType === 'background' ? 'background_id' : 'drug_test_id';
+    var res = supabaseGet_('candidates', {
       select: 'id,first_name,last_name,background_status,drug_test_status',
       [cidField]: 'eq.' + cid, limit: 1
     });
     if (res && res.length > 0) {
       res[0]._match_method = 'cid'; res[0]._match_confidence = 1.0; return res[0];
     }
-    const altField = emailType === 'background' ? 'drug_test_id' : 'background_id';
-    const res2 = supabaseGet_('candidates', {
+    var altField = emailType === 'background' ? 'drug_test_id' : 'background_id';
+    var res2 = supabaseGet_('candidates', {
       select: 'id,first_name,last_name,background_status,drug_test_status',
       [altField]: 'eq.' + cid, limit: 1
     });
@@ -198,20 +223,54 @@ function findCandidate_(cid, name, emailType) {
       res2[0]._match_method = 'cid_fallback'; res2[0]._match_confidence = 0.9; return res2[0];
     }
   }
+
+  // 2. Name match -- normalize, scope by client, fuzzy last name fallback
   if (name) {
-    const parts = name.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      const res = supabaseGet_('candidates', {
+    var normalized = normalizeName_(name);
+    var parts = normalized.split(/\s+/);
+    if (parts.length < 2) return null;
+
+    var firstName = parts[0];
+    var lastName  = parts.slice(1).join(' '); // full remainder handles compound names
+
+    // Derive client_id scope from FADV account ID
+    var clientId = fadvAccountId ? (FADV_ACCOUNT_TO_CLIENT[fadvAccountId] || null) : null;
+
+    // Exact normalized match -- with client scope if available
+    var params = {
+      select: 'id,first_name,last_name,background_status,drug_test_status',
+      'first_name': 'ilike.' + firstName,
+      'last_name':  'ilike.' + lastName,
+      limit: 1
+    };
+    if (clientId) params['client_id'] = 'eq.' + clientId;
+
+    var res3 = supabaseGet_('candidates', params);
+    if (res3 && res3.length > 0) {
+      res3[0]._match_method = clientId ? 'name_scoped' : 'name_exact';
+      res3[0]._match_confidence = clientId ? 1.0 : 0.9;
+      return res3[0];
+    }
+
+    // Fuzzy fallback: first name + final word of last name only
+    // Catches "JHONATAN ALVAREZ CORNEJO" -> "Jhonatan Alvarez"
+    // Only run with client scope to avoid false positives
+    if (clientId && parts.length > 2) {
+      var res4 = supabaseGet_('candidates', {
         select: 'id,first_name,last_name,background_status,drug_test_status',
-        'first_name': 'ilike.' + parts[0],
-        'last_name':  'ilike.' + parts.slice(1).join(' '),
+        'first_name': 'ilike.' + firstName,
+        'last_name':  'ilike.' + parts[1], // second word only
+        'client_id':  'eq.' + clientId,
         limit: 1
       });
-      if (res && res.length > 0) {
-        res[0]._match_method = 'name_exact'; res[0]._match_confidence = 1.0; return res[0];
+      if (res4 && res4.length > 0) {
+        res4[0]._match_method = 'name_fuzzy_compound';
+        res4[0]._match_confidence = 0.75;
+        return res4[0];
       }
     }
   }
+
   return null;
 }
 
