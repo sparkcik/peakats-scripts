@@ -475,14 +475,45 @@ def twilio_send_sms():
     data = request.json or {}
     to = data.get("to", "")
     body_text = data.get("body", "")
+    candidate_id = data.get("candidate_id")
+    template_name = data.get("template_name", "direct_send")
     if not to:
         return jsonify({"error": "to is required"}), 400
     digits = "".join(c for c in to if c.isdigit())
     if len(digits) == 10:
         digits = "1" + digits
     to_e164 = "+" + digits
+    to_clean = digits[-10:] if len(digits) >= 10 else digits
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
     auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Write queue row before sending -- P2 requirement: all sends must log to sms_send_queue
+    queue_row = {
+        "to_number": to_clean,
+        "body": body_text,
+        "status": "pending",
+        "migration_status": "twilio_active",
+        "scheduled_for": now,
+        "created_at": now,
+        "updated_at": now,
+        "template_name": template_name,
+    }
+    if candidate_id:
+        queue_row["candidate_id"] = candidate_id
+    queue_resp = http_requests.post(
+        f"{SUPABASE_URL}/rest/v1/sms_send_queue",
+        headers={**_SB_HEADERS, "Prefer": "return=representation"},
+        json=queue_row,
+    )
+    queue_id = None
+    if queue_resp.status_code in (200, 201):
+        rows = queue_resp.json()
+        queue_id = rows[0].get("id") if rows else None
+        log.info(f"[twilio/send] Queue row created id={queue_id}")
+    else:
+        log.warning(f"[twilio/send] Queue row failed: {queue_resp.status_code} {queue_resp.text[:200]}")
+
     try:
         r = http_requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
@@ -491,10 +522,32 @@ def twilio_send_sms():
         )
         body_resp = r.json()
         if r.status_code >= 400:
+            if queue_id:
+                http_requests.patch(
+                    f"{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{queue_id}",
+                    headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+                    json={"status": "failed", "delivery_status": "failed", "updated_at": datetime.now(timezone.utc).isoformat()},
+                )
             return jsonify({"error": body_resp.get("message", "send failed")}), 500
-        return jsonify({"status": body_resp.get("status"), "sid": body_resp.get("sid")})
+        sid = body_resp.get("sid")
+        status = body_resp.get("status")
+        # Update queue row with SID and delivery status
+        if queue_id:
+            http_requests.patch(
+                f"{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{queue_id}",
+                headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+                json={"status": "sent", "twilio_sid": sid, "delivery_status": status, "sent_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+            )
+        log.info(f"[twilio/send] Sent to {to_e164} sid={sid} queue_id={queue_id}")
+        return jsonify({"status": status, "sid": sid, "queue_id": queue_id})
     except Exception as e:
         log.error(f"[twilio/send] Exception: {e}")
+        if queue_id:
+            http_requests.patch(
+                f"{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{queue_id}",
+                headers={**_SB_HEADERS, "Prefer": "return=minimal"},
+                json={"status": "failed", "delivery_status": "failed", "updated_at": datetime.now(timezone.utc).isoformat()},
+            )
         return jsonify({"error": str(e)}), 500
 
 @app.route("/twilio/sms", methods=["POST"])
