@@ -306,11 +306,19 @@ def main():
             update_comms_log(candidate_id, message_sid, body)
             print(f'         SENT via {used_platform.upper()} -- ID: {message_sid}')
             sent += 1
-            time.sleep(1.2)
         except Exception as e:
+            err_str = str(e)
             mark_failed(msg_id, e)
-            print(f'         FAILED -- {e}')
+            if '429' in err_str or 'rate' in err_str.lower():
+                print(f'         RATE LIMITED (429) -- backing off 30s')
+                time.sleep(30.0)
+            else:
+                print(f'         FAILED -- {e}')
             failed += 1
+        finally:
+            # Always 2s between sends -- Twilio A2P rate limit 1 msg/sec
+            # Applies on success AND failure to prevent silent 429 drops
+            time.sleep(2.0)
 
     print(f'\n[SMS Poller] Complete. Sent: {sent} | Failed: {failed}')
 
