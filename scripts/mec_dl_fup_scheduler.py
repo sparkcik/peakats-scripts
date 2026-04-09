@@ -39,6 +39,27 @@ FUP_CADENCE = [
 ]
 
 
+def enforce_blackout(dt):
+    """Push any send time outside 7:30AM-7:30PM ET to next 7:30AM ET window."""
+    try:
+        import pytz
+    except ImportError:
+        return dt
+    ET = pytz.timezone('America/New_York')
+    if dt.tzinfo is None:
+        import pytz as _tz
+        dt = _tz.utc.localize(dt)
+    dt_et = dt.astimezone(ET)
+    hour, minute = dt_et.hour, dt_et.minute
+    in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour > 19) or (hour == 19 and minute >= 30)
+    if in_blackout:
+        delivery = dt_et.replace(hour=7, minute=30, second=0, microsecond=0)
+        if (hour > 19) or (hour == 19 and minute >= 30):
+            delivery = delivery + timedelta(days=1)
+        return delivery.astimezone(pytz.utc).replace(tzinfo=None)
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
 def fetch_candidates():
     url = (
         f"{SUPABASE_URL}/rest/v1/candidates"
@@ -85,7 +106,7 @@ def queue_sms(candidate_id, phone, template_id, first_name):
             'template_id':      template_id,
             'template_name':    f'MEC FUP T{template_id}',
             'status':           'pending',
-            'scheduled_for':    now,
+            'scheduled_for':    enforce_blackout(now if hasattr(now, 'hour') else datetime.fromisoformat(now.replace('Z',''))).isoformat(),
             'created_by':       'mec_dl_fup_scheduler',
             'migration_status': 'rc_active'
         }
