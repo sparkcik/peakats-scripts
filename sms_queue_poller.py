@@ -51,6 +51,27 @@ SB_HEADERS = {
 
 # ── Supabase helpers ──────────────────────────────────────────────────────────
 
+def enforce_blackout(dt):
+    """Push any send time outside 7:30AM-7:30PM ET to next 7:30AM ET window."""
+    try:
+        import pytz
+    except ImportError:
+        return dt
+    ET = pytz.timezone('America/New_York')
+    if dt.tzinfo is None:
+        import pytz as _tz
+        dt = _tz.utc.localize(dt)
+    dt_et = dt.astimezone(ET)
+    hour, minute = dt_et.hour, dt_et.minute
+    in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour > 19) or (hour == 19 and minute >= 30)
+    if in_blackout:
+        delivery = dt_et.replace(hour=7, minute=30, second=0, microsecond=0)
+        if (hour > 19) or (hour == 19 and minute >= 30):
+            delivery = delivery + timedelta(days=1)
+        return delivery.astimezone(pytz.utc).replace(tzinfo=None)
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
 def get_due_messages():
     now = datetime.now(timezone.utc).isoformat()
     resp = requests.get(
