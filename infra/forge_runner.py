@@ -131,7 +131,7 @@ WHITELIST = {
         "allowed_args": ["--dry-run"],
     },
     "mec_outreach": {
-        "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_trigger.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "mec_outreach_trigger.py"),
         "description": "MEC/DL outreach -- send Template 15/46/37 SMS based on drug/BG status",
         "allowed_args": [],
     },
@@ -690,6 +690,22 @@ def _sms_scheduler():
         time.sleep(60)
 
 
+def _run_mec_outreach():
+    """Execute mec_outreach_trigger.py every 30 min."""
+    _run_script("mec_outreach")
+
+
+def _mec_outreach_scheduler():
+    """Backup MEC outreach -- every 30 minutes."""
+    import schedule as _schedule
+    _schedule.every(30).minutes.do(_run_mec_outreach)
+    log.info("[scheduler] mec_outreach started -- every 30 min (backup to pg_cron)")
+    while True:
+        _schedule.run_pending()
+        import time as _time
+        _time.sleep(1)
+
+
 def _gcic_outreach_scheduler():
     """Backup GCIC outreach -- every 30 minutes."""
     import schedule as _schedule
@@ -722,6 +738,7 @@ if __name__ == "__main__":
 
     threading.Thread(target=_sms_scheduler, daemon=True).start()
     threading.Thread(target=_gcic_outreach_scheduler, daemon=True).start()
+    threading.Thread(target=_mec_outreach_scheduler, daemon=True).start()
     threading.Thread(target=_daily_scheduler, daemon=True).start()
 
     port = int(os.environ.get("PORT", 5678))
