@@ -265,6 +265,14 @@ def main():
         print('[SMS Poller] Nothing to send. Exiting.')
         return
 
+    # Blackout gate: 7:30AM-7:30PM ET only
+    import pytz as _pytz_bo
+    now_et = datetime.now(timezone.utc).astimezone(_pytz_bo.timezone('America/New_York'))
+    _h, _m = now_et.hour, now_et.minute
+    if (_h < 7) or (_h == 7 and _m < 30) or (_h > 19) or (_h == 19 and _m >= 30):
+        print(f'[SMS Poller] Blackout window active ({now_et.strftime("%H:%M")} ET) -- skipping all sends until 7:30AM ET.')
+        return
+
     sent = 0
     failed = 0
 
