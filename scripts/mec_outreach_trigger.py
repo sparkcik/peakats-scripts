@@ -17,7 +17,7 @@ import os
 import sys
 import argparse
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import create_engine, text
 
 # -- Config -------------------------------------------------------------------
@@ -31,36 +31,64 @@ CREATED_BY = 'mec_outreach_trigger'
 TEMPLATE_15_BODY = (
     "[FIRST], great news -- your background check has cleared. The last step is "
     "your drug screen and I need your Medical Examiner Certificate (MEC) from your "
-    "DOT physical along with a photo of your Driver License to get you placed.\n\n"
+    "DOT physical along with a photo of your Driver License to get you placed.
+
+"
     "When you have both ready, upload here -- takes 2 minutes: "
-    "https://bit.ly/mec-dl-form\n\n"
+    "https://bit.ly/mec-dl-form
+
+"
     "Please reply YES or NO to confirm if you have already completed the drug screen "
     "and physical. If yes, submit your MEC and DL using that link. If no, let me know "
-    "how soon you can go -- I have a position ready for you.\n\n"
-    "Kai\nPEAKrecruiting\nQuestions? (470) 470-4766"
+    "how soon you can go -- I have a position ready for you.
+
+"
+    "Kai
+PEAKrecruiting
+Questions? (470) 470-4766"
 )
 
 TEMPLATE_46_BODY = (
     "[FIRST], great news -- your drug screen is complete. I am waiting on your "
     "background check to finalize and want to make sure I am ready to move the "
-    "moment it clears.\n\n"
+    "moment it clears.
+
+"
     "I need your Medical Examiner Certificate (MEC) from your DOT physical along "
-    "with a photo of your Driver License on file now so there is no delay.\n\n"
-    "Upload here -- takes 2 minutes: https://bit.ly/mec-dl-form\n\n"
+    "with a photo of your Driver License on file now so there is no delay.
+
+"
+    "Upload here -- takes 2 minutes: https://bit.ly/mec-dl-form
+
+"
     "Reply YES if you have your MEC card ready to upload, or NO if you still need "
-    "to complete your DOT physical.\n\n"
-    "Kai\nPEAKrecruiting\nQuestions? (470) 470-4766"
+    "to complete your DOT physical.
+
+"
+    "Kai
+PEAKrecruiting
+Questions? (470) 470-4766"
 )
 
 TEMPLATE_37_BODY = (
     "[FIRST], checking in on your file -- things are moving on my end. Your drug "
-    "screen is complete and I am almost there.\n\n"
+    "screen is complete and I am almost there.
+
+"
     "The last thing I need is your Medical Examiner Certificate (MEC) from your "
-    "DOT physical along with a photo of your Driver License to finalize everything.\n\n"
-    "Upload here -- takes 2 minutes: https://bit.ly/mec-dl-form\n\n"
+    "DOT physical along with a photo of your Driver License to finalize everything.
+
+"
+    "Upload here -- takes 2 minutes: https://bit.ly/mec-dl-form
+
+"
     "Please reply YES or NO to confirm you have your MEC card ready. If yes, submit "
-    "using that link. If no, let me know how soon you can get your DOT physical done.\n\n"
-    "Kai\nPEAKrecruiting\nQuestions? (470) 470-4766"
+    "using that link. If no, let me know how soon you can get your DOT physical done.
+
+"
+    "Kai
+PEAKrecruiting
+Questions? (470) 470-4766"
 )
 
 # -- Supabase helpers ---------------------------------------------------------
@@ -260,7 +288,8 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
         print(f'         [MEC Outreach] Queued T{tpl_id} for {first} {last} ({client}) drug={drug} bg={bg}')
         count += 1
 
-    print(f'\n[MEC Outreach] Done. {count} queued, {skipped} skipped.')
+    print(f'
+[MEC Outreach] Done. {count} queued, {skipped} skipped.')
 
 
 if __name__ == '__main__':
