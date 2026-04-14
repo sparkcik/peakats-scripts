@@ -369,6 +369,20 @@ def run_mec_dl_reminder():
                 })
             except Exception as e:
                 print(f'         FAILED to insert escalation forge_memory: {e}')
+            # Insert action_item for calendar escalation alert
+            try:
+                sb_insert('action_items', {
+                    'task': f'MEC/DL ESCALATION -- {first} {last} ({client}) -- 3 reminders sent, no upload. Manual follow-up required.',
+                    'priority': 'P0',
+                    'category': 'OPS',
+                    'domain': 'PEAK Ops',
+                    'status': 'PENDING',
+                    'deadline': now_iso,
+                    'created_at': now_iso
+                })
+                print(f'         [MEC/DL Reminder] Action item created for Day 3 escalation: {first} {last}')
+            except Exception as e:
+                print(f'         FAILED to insert escalation action_item: {e}')
 
         try:
             sb_patch('candidates', {'id': f'eq.{cid}'}, update_fields)
