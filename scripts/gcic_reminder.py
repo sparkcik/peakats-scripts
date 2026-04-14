@@ -215,6 +215,8 @@ def run_gcic_reminder():
         # Check if at least 1 day has passed
         try:
             sent_dt = datetime.fromisoformat(compare_time.replace('Z', '+00:00'))
+            if sent_dt.tzinfo is None:
+                sent_dt = sent_dt.replace(tzinfo=timezone.utc)
             elapsed = (datetime.now(timezone.utc) - sent_dt).total_seconds()
             if elapsed < 86400:
                 skipped += 1
