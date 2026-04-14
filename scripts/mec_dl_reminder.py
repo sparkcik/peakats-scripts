@@ -151,6 +151,7 @@ def run_mec_dl_reminder():
         'mec_dl_collection_stage': 'eq.OUTREACH_SENT',
         'or': '(mec_uploaded.is.null,mec_uploaded.eq.0,dl_verified.is.null,dl_verified.eq.0)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
+        'compliance_override': 'neq.true',
         'order': 'id.asc'
     })
 
