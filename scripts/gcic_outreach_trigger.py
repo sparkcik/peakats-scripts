@@ -146,6 +146,7 @@ def run_gcic_outreach():
         'background_status': 'in.(In Progress,Needs Further Review)',
         'or': '(gcic_outreach_sent_at.is.null,gcic_status.eq.NOT_SENT)',
         'status': 'not.in.(Rejected,Hired,Transferred)',
+        'compliance_override': 'neq.true',
         'phone': 'neq.0000000000',
         'order': 'id.asc'
     })
