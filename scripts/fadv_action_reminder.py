@@ -148,6 +148,7 @@ def run_fadv_action_reminder():
         'fadv_action_sent_at': 'not.is.null',
         'fadv_action_resolved_at': 'is.null',
         'status': 'not.in.(Rejected,Hired,Transferred)',
+        'compliance_override': 'neq.true',
         'order': 'id.asc'
     })
 
