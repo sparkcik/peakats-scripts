@@ -310,8 +310,8 @@ def main():
             err_str = str(e)
             mark_failed(msg_id, e)
             if '429' in err_str or 'rate' in err_str.lower():
-                print(f'         RATE LIMITED (429) -- backing off 30s')
-                time.sleep(30.0)
+                print(f'         RATE LIMITED (429) -- backing off 10s')
+                time.sleep(10.0)
             else:
                 print(f'         FAILED -- {e}')
             failed += 1
