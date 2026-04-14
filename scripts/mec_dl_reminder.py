@@ -217,6 +217,8 @@ def run_mec_dl_reminder():
             # Check 1-day elapsed since outreach
             try:
                 sent_dt = datetime.fromisoformat(outreach_sent.replace('Z', '+00:00'))
+                if sent_dt.tzinfo is None:
+                    sent_dt = sent_dt.replace(tzinfo=timezone.utc)
                 if (datetime.now(timezone.utc) - sent_dt).total_seconds() < 86400:
                     skipped += 1
                     continue
@@ -301,6 +303,8 @@ def run_mec_dl_reminder():
         # Check if at least 1 day has passed
         try:
             sent_dt = datetime.fromisoformat(compare_time.replace('Z', '+00:00'))
+            if sent_dt.tzinfo is None:
+                sent_dt = sent_dt.replace(tzinfo=timezone.utc)
             elapsed = (datetime.now(timezone.utc) - sent_dt).total_seconds()
             if elapsed < 86400:  # less than 1 day
                 skipped += 1
