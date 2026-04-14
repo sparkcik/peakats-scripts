@@ -283,6 +283,21 @@ def run_gcic_reminder():
                 })
             except Exception as e:
                 print(f'         FAILED to insert escalation forge_memory: {e}')
+            # Insert action_item for calendar escalation alert
+            try:
+                from datetime import date
+                sb_insert('action_items', {
+                    'task': f'GCIC ESCALATION -- {first} {last} ({client}) -- 3 reminders sent, no response. Manual follow-up required.',
+                    'priority': 'P0',
+                    'category': 'OPS',
+                    'domain': 'PEAK Ops',
+                    'status': 'PENDING',
+                    'deadline': now_iso,
+                    'created_at': now_iso
+                })
+                print(f'         [GCIC Reminder] Action item created for Day 3 escalation: {first} {last}')
+            except Exception as e:
+                print(f'         FAILED to insert escalation action_item: {e}')
 
         try:
             sb_patch('candidates', {'id': f'eq.{cid}'}, update_fields)
