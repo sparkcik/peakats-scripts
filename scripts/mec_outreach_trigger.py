@@ -149,6 +149,8 @@ def select_template(drug_status, bg_status):
         return (46, 'MEC Outreach -- Drug Pass, BG In Progress (Proactive)', TEMPLATE_46_BODY)
     if drug_status == 'Pass':
         return (46, 'MEC Outreach -- Drug Pass, BG Other (Proactive)', TEMPLATE_46_BODY)
+    if drug_status == 'In Progress' and bg_status == 'Eligible':
+        return (15, 'MEC Outreach -- Drug In Progress, BG Eligible (Urgency)', TEMPLATE_15_BODY)
     if drug_status == 'In Progress':
         return (37, 'MEC Outreach -- Drug In Progress, BG Active (Warm)', TEMPLATE_37_BODY)
     return None
@@ -169,7 +171,7 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
         WHERE (
             (drug_test_status = 'Pass' AND background_status IN ('Eligible','In Progress','Consider','Needs Further Review'))
             OR
-            (drug_test_status = 'In Progress' AND background_status IN ('In Progress','Consider'))
+            (drug_test_status = 'In Progress' AND background_status IN ('In Progress','Consider','Eligible'))
         )
         AND mec_dl_outreach_sent_at IS NULL
         AND (mec_dl_collection_stage IS NULL OR mec_dl_collection_stage NOT IN ('RECEIVED','SUBMITTED'))
