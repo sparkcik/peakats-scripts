@@ -148,6 +148,7 @@ def run_drug_screen_reminder():
         'drug_outreach_sent_at': 'not.is.null',
         'background_status': 'neq.Ineligible',
         'status': 'not.in.(Rejected,Hired,Transferred)',
+        'compliance_override': 'neq.true',
         'order': 'id.asc'
     })
 
