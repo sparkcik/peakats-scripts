@@ -149,6 +149,7 @@ def run_gcic_reminder():
         'or': '(gcic_form_completed.is.null,gcic_form_completed.eq.0)',
         'gcic_status': 'neq.COMPLETE',
         'status': 'not.in.(Rejected,Hired,Transferred)',
+        'compliance_override': 'neq.true',
         'order': 'id.asc'
     })
 
