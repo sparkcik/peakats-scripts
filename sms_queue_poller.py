@@ -273,6 +273,24 @@ def main():
         print(f'[SMS Poller] Blackout window active ({now_et.strftime("%H:%M")} ET) -- skipping all sends until 7:30AM ET.')
         return
 
+    # ── Opted-out guard: batch fetch before send loop -- one query per run ──
+    opted_out_ids = set()
+    candidate_ids = [m['candidate_id'] for m in messages if m.get('candidate_id')]
+    if candidate_ids:
+        oo_resp = requests.get(
+            f'{SUPABASE_URL}/rest/v1/candidates',
+            headers=SB_HEADERS,
+            params={
+                'id': f'in.({",".join(str(i) for i in candidate_ids)})',
+                'sms_opted_out': 'eq.true',
+                'select': 'id'
+            }
+        )
+        if oo_resp.ok:
+            opted_out_ids = {r['id'] for r in oo_resp.json()}
+            if opted_out_ids:
+                print(f'[SMS Poller] {len(opted_out_ids)} opted-out candidate(s) -- will skip and cancel their queued messages')
+
     sent = 0
     failed = 0
 
@@ -286,6 +304,17 @@ def main():
 
         print(f'\n[{msg_id}] To: {to_number} | Template: {template} | Platform: {platform}')
         print(f'         Preview: {body[:80]}...')
+
+        # Skip opted-out candidates
+        if candidate_id and candidate_id in opted_out_ids:
+            print(f'         [OPTED OUT] Skipping -- marking cancelled')
+            now_iso = datetime.now(timezone.utc).isoformat()
+            requests.patch(
+                f'{SUPABASE_URL}/rest/v1/sms_send_queue?id=eq.{msg_id}',
+                headers=SB_HEADERS,
+                json={'status': 'cancelled', 'delivery_error': 'sms_opted_out', 'updated_at': now_iso}
+            )
+            continue
 
         if DRY_RUN:
             print(f'         [DRY RUN] Would send via {"Twilio" if platform == "twilio_active" else "RC"} -- skipping')
@@ -325,3 +354,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
