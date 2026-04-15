@@ -167,7 +167,7 @@ function processMessage_(message) {
     return 'skipped';
   }
 
-  const writeOk = updateCandidate_(candidate.id, emailType, mappedStatus);
+  const writeOk = updateCandidate_(candidate.id, emailType, mappedStatus, cid);
   if (!writeOk) {
     Logger.log('WRITE FAILED for candidate ' + candidate.id + ' (' + candidateName + ')');
     logToSupabase_(msgId, candidateName, cid, emailType, rawValue, mappedStatus,
@@ -275,12 +275,21 @@ function findCandidate_(cid, name, emailType, fadvAccountId) {
 }
 
 // ── UPDATE CANDIDATE ─────────────────────────────────────────────────────────
-function updateCandidate_(candidateId, emailType, mappedStatus) {
-  const field = emailType === 'background' ? 'background_status' : 'drug_test_status';
+function updateCandidate_(candidateId, emailType, mappedStatus, cid) {
+  const field    = emailType === 'background' ? 'background_status' : 'drug_test_status';
+  const cidField = emailType === 'background' ? 'background_id'     : 'drug_test_id';
   const payload = {
     [field]: mappedStatus,
     fadv_last_updated: new Date().toISOString()
   };
+  // Stamp CID if provided and not already set -- never overwrite existing order ID
+  if (cid) {
+    const current = supabaseGet_('candidates', { select: cidField, 'id': 'eq.' + candidateId, limit: 1 });
+    if (current && current.length > 0 && !current[0][cidField]) {
+      payload[cidField] = cid;
+      Logger.log('[updateCandidate_] Stamping ' + cidField + ' = ' + cid + ' for candidate ' + candidateId);
+    }
+  }
 
   if (AUTO_REJECT_STATUSES.includes(mappedStatus)) {
     payload.status = 'Rejected';
@@ -930,3 +939,4 @@ function processFormFoxOrders() {
     thread.addLabel(processedLabel);
   });
 }
+
