@@ -135,7 +135,7 @@ def already_queued(candidate_id):
     r = requests.get(
         f"{SUPABASE_URL}/rest/v1/sms_send_queue"
         f"?candidate_id=eq.{candidate_id}"
-        f"&created_by=eq.mec_dl_trigger"
+        f"&template_id=in.(15,16,17,18,37,46)"
         f"&status=in.(pending,sent)"
         f"&created_at=gte.{cutoff}"
         f"&limit=1"
