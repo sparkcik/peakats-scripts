@@ -835,8 +835,20 @@ def _tr(c, am, cls=""):
     ron = "on" if sv.get("reroute_requested") else ""
     qc = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("qcert_completed_at") else '<span style="color:#e0e0e0">--</span>'
     rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
+    station_map = {
+        'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
+        'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'GVL',
+    }
+    cid_val = c.get("client_id","")
+    station_label = station_map.get(cid_val, cid_val.upper()[:3])
+    station_colors = {
+        'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#BA7517',
+    }
+    sc = station_colors.get(cid_val, '#888')
+    station_pill = f'<span style="background:{sc};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
     return f"""<tr class="{cls}" id="row-{cid}">
       <td><button class="name-btn" onclick="showCard({cid})">{c.get("first_name","")} {c.get("last_name","")}</button></td>
+      <td>{station_pill}</td>
       <td>{_pill(c.get("rwp_score"), c.get("rwp_classification"))}</td>
       <td>{_bc(c.get("background_status"))}</td>
       <td>{_bc(c.get("drug_test_status"))}</td>
@@ -862,7 +874,7 @@ def _sec(title, dot, inner, note=""):
 def _tbl(rows, extra=True):
     extra_cols = "<th>QCert</th><th>Road</th>" if extra else ""
     return f'''<div class="tbl-wrap"><table><thead><tr>
-      <th style="text-align:left">Candidate</th><th>Profile</th><th>Background</th><th>Drug</th>
+      <th style="text-align:left">Candidate</th><th>Station</th><th>Profile</th><th>Background</th><th>Drug</th>
       <th>GCIC</th><th>MEC</th><th>DL</th>{extra_cols}<th>Hiring Status</th><th>Notes</th>
     </tr></thead><tbody>{"".join(rows)}</tbody></table></div>'''
 
@@ -883,8 +895,8 @@ def client_dashboard(token):
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
         "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
         "background_status,drug_test_status,gcic_uploaded,mec_uploaded,dl_verified,"
-        "qcert_completed_at,road_test_date"
-        "&order=rwp_score.desc.nullslast"
+        "qcert_completed_at,road_test_date,client_id"
+        "&order=client_id.asc,rwp_score.desc.nullslast"
     )
     if not isinstance(cands, list):
         cands = []
