@@ -779,6 +779,287 @@ def _daily_scheduler():
         time.sleep(60)
 
 
+
+# ---------------------------------------------------------------------------
+# Client Dashboard  GET /d/<token>
+# ---------------------------------------------------------------------------
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://eyopvsmsvbgfuffscfom.supabase.co")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+def _supa_get(path):
+    r = http_requests.get(
+        f"{SUPABASE_URL}/rest/v1/{path}",
+        headers={"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"},
+        timeout=10,
+    )
+    return r.json()
+
+RWP_META = {
+    "FEDEX_ACTIVE":     {"bg": "#185FA5", "label": "FedEx Active"},
+    "FEDEX_FORMER":     {"bg": "#185FA5", "label": "FedEx Former"},
+    "DELIVERY_EXP":     {"bg": "#0F6E56", "label": "Delivery Exp"},
+    "WAREHOUSE_EXP":    {"bg": "#5DCAA5", "label": "Warehouse Exp"},
+    "COMMERCIAL_DRIVER":{"bg": "#BA7517", "label": "Commercial Driver"},
+    "LOW_RELEVANCE":    {"bg": "#888780", "label": "Low Relevance"},
+}
+
+def _pill(score, cls):
+    if not cls:
+        return ""
+    m = RWP_META.get(cls, {"bg": "#888", "label": cls})
+    return f'<span style="background:{m["bg"]};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">{m["label"]} {score or ""}</span>'
+
+def _bc(v):
+    if not v:
+        return '<span style="color:#ccc">--</span>'
+    l = v.lower()
+    if l in ("eligible", "pass", "negative/pass"):
+        return f'<span style="color:#0F6E56;font-weight:600">{v}</span>'
+    if l in ("ineligible", "fail"):
+        return f'<span style="color:#A32D2D;font-weight:600">{v}</span>'
+    if "progress" in l or "review" in l or "event" in l:
+        return f'<span style="color:#BA7517;font-weight:600">{v}</span>'
+    return f'<span style="color:#555">{v}</span>'
+
+def _ck(v):
+    return '<span style="color:#0F6E56;font-weight:700">&#10003;</span>' if v == 1 else '<span style="color:#e0e0e0">--</span>'
+
+def _tr(c, am, cls=""):
+    cid = c["id"]
+    sv = am.get(cid, {})
+    a = sv.get("action") or "none"
+    nt = (sv.get("notes") or "").replace('"', "&quot;")
+    sc = f" s-{a}" if a != "none" else ""
+    rshow = "show" if a == "rejected" else ""
+    ron = "on" if sv.get("reroute_requested") else ""
+    qc = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("qcert_completed_at") else '<span style="color:#e0e0e0">--</span>'
+    rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
+    return f"""<tr class="{cls}" id="row-{cid}">
+      <td><button class="name-btn" onclick="showCard({cid})">{c.get("first_name","")} {c.get("last_name","")}</button></td>
+      <td>{_pill(c.get("rwp_score"), c.get("rwp_classification"))}</td>
+      <td>{_bc(c.get("background_status"))}</td>
+      <td>{_bc(c.get("drug_test_status"))}</td>
+      <td>{_ck(c.get("gcic_uploaded"))}</td>
+      <td>{_ck(c.get("mec_uploaded"))}</td>
+      <td>{_ck(c.get("dl_verified"))}</td>
+      <td>{qc}</td><td>{rd}</td>
+      <td><select class="hire-sel{sc}" onchange="onAction({cid},this)">
+        <option value="none"{"selected" if a=="none" else ""}>-- Select --</option>
+        <option value="contacting"{"selected" if a=="contacting" else ""}>Contacting</option>
+        <option value="hired"{"selected" if a=="hired" else ""}>Hired</option>
+        <option value="rejected"{"selected" if a=="rejected" else ""}>Rejected</option>
+      </select>
+      <button class="reroute-btn {rshow} {ron}" onclick="onReroute({cid},this)">Re-route</button></td>
+      <td><textarea class="notes-input" placeholder="Notes..." onblur="onNotes({cid},this)">{nt}</textarea>
+      <span class="sv-flash" id="sv-{cid}">Saved</span></td>
+    </tr>"""
+
+def _sec(title, dot, inner, note=""):
+    note_html = f'<p class="sec-note">{note}</p>' if note else ""
+    return f'''<div class="section"><div class="sec-hdr"><span class="dot" style="background:{dot}"></span><span class="sec-title">{title}</span></div>{note_html}{inner}</div>'''
+
+def _tbl(rows, extra=True):
+    extra_cols = "<th>QCert</th><th>Road</th>" if extra else ""
+    return f'''<div class="tbl-wrap"><table><thead><tr>
+      <th style="text-align:left">Candidate</th><th>Profile</th><th>Background</th><th>Drug</th>
+      <th>GCIC</th><th>MEC</th><th>DL</th>{extra_cols}<th>Hiring Status</th><th>Notes</th>
+    </tr></thead><tbody>{"".join(rows)}</tbody></table></div>'''
+
+@app.route("/d/<token>", methods=["GET"])
+def client_dashboard(token):
+    # Validate token
+    toks = _supa_get(f"client_tokens?token=eq.{token}&active=eq.true&select=client_id,label")
+    if not isinstance(toks, list) or not toks:
+        return Response("<html><body><h2>Invalid or expired link.</h2></body></html>", status=403, content_type="text/html")
+    client_id = toks[0]["client_id"]
+    label = toks[0]["label"]
+
+    # Candidates: show only where BG has been submitted
+    cands = _supa_get(
+        f"candidates?client_id=eq.{client_id}"
+        "&status=not.in.(Rejected,Hired,Transferred)"
+        "&background_status=in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
+        "&or=(compliance_override.is.null,compliance_override.eq.false)"
+        "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
+        "background_status,drug_test_status,gcic_uploaded,mec_uploaded,dl_verified,"
+        "qcert_completed_at,road_test_date"
+        "&order=rwp_score.desc.nullslast"
+    )
+    if not isinstance(cands, list):
+        cands = []
+
+    # Pre-submission count
+    pre = _supa_get(
+        f"candidates?client_id=eq.{client_id}"
+        "&status=not.in.(Rejected,Hired,Transferred)"
+        "&background_status=not.in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
+        "&or=(compliance_override.is.null,compliance_override.eq.false)"
+        "&select=id"
+    )
+    pre_count = len(pre) if isinstance(pre, list) else 0
+
+    # Client actions
+    acts = _supa_get(f"client_actions?token=eq.{token}&select=candidate_id,action,notes,reroute_requested")
+    am = {}
+    if isinstance(acts, list):
+        for a in acts:
+            am[a["candidate_id"]] = a
+
+    badge, prog, rev, hired = [], [], [], []
+    cdata = {}
+    for c in cands:
+        cdata[c["id"]] = c
+        bg = (c.get("background_status") or "").lower()
+        dr = (c.get("drug_test_status") or "").lower()
+        ca = am.get(c["id"], {}).get("action")
+        if ca == "hired":
+            hired.append(_tr(c, am, "badge-bg"))
+            continue
+        if bg == "eligible" and dr in ("pass", "negative/pass"):
+            badge.append(_tr(c, am, "badge-bg"))
+        elif bg == "in progress" or (bg == "needs further review" and dr in ("in progress", "pass", "negative/pass")):
+            prog.append(_tr(c, am))
+        else:
+            rev.append(c)
+
+    total = len(badge) + len(prog) + len(rev)
+    now = datetime.now().strftime("%B %-d, %Y")
+
+    cdata_js = json.dumps({str(k): {
+        "first_name": v.get("first_name",""),
+        "last_name": v.get("last_name",""),
+        "phone": v.get("phone",""),
+        "email": v.get("email",""),
+        "rwp_classification": v.get("rwp_classification",""),
+        "rwp_score": v.get("rwp_score"),
+    } for k,v in cdata.items()})
+
+    rev_block = f'''<div class="rev-box"><div class="rev-num">{len(rev)}</div>
+      <div class="rev-txt"><strong>{len(rev)} candidate{"s are" if len(rev)!=1 else " is"} under review</strong><br>
+      Background verification requires additional documentation. PEAK is actively working these cases.</div></div>''' if rev else ""
+
+    pre_block = f'''<div class="rev-box" style="border-color:#ddd"><div class="rev-num" style="color:#aaa">{pre_count}</div>
+      <div class="rev-txt"><strong>{pre_count} candidate{"s are" if pre_count!=1 else " is"} in pre-submission</strong><br>
+      In pipeline but background screen not yet submitted. PEAK is working to vet and advance these candidates.</div></div>''' if pre_count else ""
+
+    hired_block = _tbl(hired, True) if hired else ""
+
+    body = (
+        (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed. Click a name to view contact details.") if badge else "") +
+        (_sec("In Progress", "#185FA5", _tbl(prog, False), "Background screening or drug test currently underway.") if prog else "") +
+        (_sec("Under Review", "#BA7517", rev_block) if rev else "") +
+        (_sec("Pre-Submission", "#aaa", pre_block) if pre_count else "") +
+        (_sec("Hired", "#0F6E56", hired_block, "Candidates marked as hired. Shown for record-keeping.") if hired else "") +
+        ('<p style="color:#aaa;text-align:center;padding:60px">No active candidates at this time.</p>' if not total and not hired else "")
+    )
+
+    SUPA_URL = SUPABASE_URL
+    ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5b3B2c21zdmJnZnVmZnNjZm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNjU1NTMsImV4cCI6MjA4Mjk0MTU1M30.-DD2BRojvNfUvF9gD3GAtRXiVP61et6xs1eBc-IbOq4"
+    ACTION_URL = f"{SUPA_URL}/functions/v1/client-action"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PEAK Pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'DM Sans',sans-serif;background:#f5f4f0;color:#1a1a1a;min-height:100vh}}
+.hdr{{background:#1a3a2a;padding:22px 32px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}}
+.hdr h1{{font-family:'DM Sans',sans-serif;font-weight:600;color:#fff;font-size:22px;letter-spacing:-0.3px}}
+.hdr p{{color:#c8a84b;font-size:13px;margin-top:3px}}
+.hdr-r{{text-align:right;color:#8aab96;font-size:12px}}
+.hdr-r strong{{color:#c8a84b;font-size:15px;display:block;margin-bottom:3px}}
+.stats{{background:#1a3a2a;padding:0 32px 20px;display:flex;gap:14px;flex-wrap:wrap}}
+.stat{{background:rgba(255,255,255,0.08);border:0.5px solid rgba(200,168,75,0.3);border-radius:8px;padding:12px 20px}}
+.sv{{font-size:26px;font-weight:600;color:#fff}}
+.sl{{font-size:11px;color:#8aab96;margin-top:2px}}
+.body{{padding:28px 32px;max-width:1200px;margin:0 auto}}
+.section{{margin-bottom:36px}}
+.sec-hdr{{display:flex;align-items:center;gap:10px;margin-bottom:12px}}
+.dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
+.sec-title{{font-size:16px;font-weight:600;color:#1a3a2a}}
+.sec-note{{font-size:13px;color:#777;margin:0 0 12px}}
+.tbl-wrap{{overflow-x:auto;border-radius:8px;border:0.5px solid #e5e7eb}}
+table{{width:100%;border-collapse:collapse;font-size:12px;min-width:860px}}
+th{{padding:8px 10px;text-align:center;font-weight:600;color:#1a3a2a;background:#f9f9f7;border-bottom:1.5px solid #c8a84b;white-space:nowrap}}
+th:first-child{{text-align:left}}
+td{{padding:8px 10px;text-align:center;border-bottom:0.5px solid #eee;white-space:nowrap;vertical-align:middle}}
+td:first-child{{text-align:left}}
+.pill{{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;color:#fff;display:inline-block}}
+.elig{{color:#0F6E56;font-weight:600}}.inelig{{color:#A32D2D;font-weight:600}}.prog{{color:#BA7517;font-weight:600}}
+.hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid #e0e0e0;font-size:11px;font-family:'DM Sans',sans-serif;background:#fff;cursor:pointer;width:118px}}
+.hire-sel.s-contacting{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
+.hire-sel.s-hired{{background:#e8faf2;border-color:#0F6E56;color:#0F6E56;font-weight:600}}
+.hire-sel.s-rejected{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
+.notes-input{{width:150px;padding:4px 6px;border-radius:6px;border:1px solid #e0e0e0;font-size:11px;font-family:'DM Sans',sans-serif;resize:none;height:32px}}
+.notes-input:focus{{outline:none;border-color:#c8a84b}}
+.sv-flash{{font-size:10px;color:#0F6E56;margin-left:3px;opacity:0;transition:opacity 0.3s}}
+.sv-flash.show{{opacity:1}}
+.reroute-btn{{padding:3px 7px;border-radius:5px;border:1px solid #BA7517;background:#fff8f0;color:#BA7517;font-size:10px;cursor:pointer;margin-top:3px;display:none}}
+.reroute-btn.show{{display:inline-block}}.reroute-btn.on{{background:#BA7517;color:#fff}}
+.name-btn{{background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#1a3a2a;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#c8a84b;padding:0}}
+.name-btn:hover{{color:#0F6E56}}
+.overlay{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:999}}
+.overlay.show{{display:block}}
+.ccard{{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.18);padding:24px 28px;z-index:1000;min-width:280px}}
+.ccard.show{{display:block}}
+.cc-name{{font-family:'DM Serif Display',serif;font-size:18px;color:#1a3a2a;margin-bottom:16px;padding-right:24px}}
+.cc-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:13px}}
+.cc-lbl{{color:#888;width:64px;flex-shrink:0;font-size:12px}}
+.cc-val a{{color:#185FA5;text-decoration:none}}
+.cc-close{{position:absolute;top:12px;right:14px;cursor:pointer;color:#aaa;font-size:20px;line-height:1;background:none;border:none}}
+.rev-box{{background:#fffbf0;border:0.5px solid #e5e7eb;border-radius:8px;padding:16px 20px;display:flex;align-items:center;gap:16px}}
+.rev-num{{font-size:32px;font-weight:600;color:#BA7517;flex-shrink:0}}
+.rev-txt{{font-size:13px;color:#666;line-height:1.6}}
+.footer{{text-align:center;padding:28px;font-size:12px;color:#bbb}}
+.footer strong{{color:#c8a84b}}
+@media(max-width:700px){{.hdr,.stats,.body{{padding-left:16px;padding-right:16px}}}}
+</style>
+</head>
+<body>
+<div class="overlay" id="ov" onclick="closeCard()"></div>
+<div class="ccard" id="cc">
+  <button class="cc-close" onclick="closeCard()">&times;</button>
+  <div class="cc-name" id="cc-name"></div>
+  <div class="cc-row"><span class="cc-lbl">Phone</span><span class="cc-val" id="cc-phone"></span></div>
+  <div class="cc-row"><span class="cc-lbl">Email</span><span class="cc-val" id="cc-email"></span></div>
+  <div class="cc-row"><span class="cc-lbl">Profile</span><span class="cc-val" id="cc-rwp"></span></div>
+</div>
+<div class="hdr">
+  <div><h1>Candidate Pipeline</h1><p>{label}</p></div>
+  <div class="hdr-r"><strong>{total} active candidates</strong>Updated {now}</div>
+</div>
+<div class="stats">
+  <div class="stat"><div class="sv" style="color:#c8a84b">{len(badge)}</div><div class="sl">Badge Ready</div></div>
+  <div class="stat"><div class="sv">{len(prog)}</div><div class="sl">In Progress</div></div>
+  <div class="stat"><div class="sv">{len(rev)}</div><div class="sl">Under Review</div></div>
+  <div class="stat"><div class="sv" style="color:#0F6E56">{len(hired)}</div><div class="sl">Hired</div></div>
+  <div class="stat"><div class="sv" style="color:#aaa">{pre_count}</div><div class="sl">Pre-Submission</div></div>
+</div>
+<div class="body">{body}</div>
+<div class="footer">Powered by <strong>PEAKrecruiting</strong> &bull; Questions? (470) 470-4766</div>
+<script>
+const TOKEN="{token}";
+const ACTION_URL="{ACTION_URL}";
+const RWP={json.dumps({k:v["label"] for k,v in RWP_META.items()})};
+const CDATA={cdata_js};
+function showCard(id){{const c=CDATA[id];if(!c)return;document.getElementById("cc-name").textContent=c.first_name+" "+c.last_name;document.getElementById("cc-phone").innerHTML=c.phone?'<a href="tel:'+c.phone+'">'+c.phone+"</a>":"--";document.getElementById("cc-email").innerHTML=c.email?'<a href="mailto:'+c.email+'">'+c.email+"</a>":"--";const r=RWP[c.rwp_classification];document.getElementById("cc-rwp").textContent=r?(r+(c.rwp_score?" "+c.rwp_score:"")):"--";document.getElementById("cc").classList.add("show");document.getElementById("ov").classList.add("show");}}
+function closeCard(){{document.getElementById("cc").classList.remove("show");document.getElementById("ov").classList.remove("show");}}
+async function post(cid,fields){{await fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{token:TOKEN,candidate_id:cid,...fields}})}});}}
+function flash(id){{const el=document.getElementById("sv-"+id);if(el){{el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2000);}}}}
+function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const row=document.getElementById("row-"+id);const btn=row&&row.querySelector(".reroute-btn");if(btn)a==="rejected"?btn.classList.add("show"):btn.classList.remove("show","on");post(id,{{action:a,reroute_requested:false}}).then(()=>flash(id));}}
+function onReroute(id,btn){{const was=btn.classList.contains("on");btn.classList.toggle("on");const reason=!was?(prompt("Brief reason for re-route (optional):")||""):"";post(id,{{action:"rejected",reroute_requested:!was,reject_reason:reason}}).then(()=>flash(id));}}
+function onNotes(id,ta){{const n=ta.value;post(id,{{notes:n}}).then(()=>flash(id));}}
+</script>
+</body>
+</html>"""
+
+    return Response(html, status=200, content_type="text/html; charset=utf-8")
+
+
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("forge-runner v1.5.0 starting")
