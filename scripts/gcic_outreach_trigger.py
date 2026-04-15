@@ -31,9 +31,9 @@ COLD_CUTOFF = datetime(2026, 2, 1, tzinfo=timezone.utc)
 TEMPLATE_BODY = (
     "Your background check is on hold -- complete both steps below to move forward.\n\n"
     "Step 1 -- Submit your info (2 min):\n"
-    "https://bit.ly/gcic-esiginfo\n\n"
+    "https://forms.gle/ExXmLv12o2V5y73J9\n\n"
     "Step 2 -- Sign your background form:\n"
-    "https://bit.ly/gcic-esig\n\n"
+    "https://na3.documents.adobe.com/public/esignWidget?wid=CBFCIBAA3AAABLblqZhC9uPMX9MGV6qzbNE9lhhVz8Db-evA1fvb4bntUwjigqr9I3K4CBa6gcmEnm_bc1TQ*\n\n"
     "Important: After signing, Adobe will send you an email asking you to verify "
     "your email address. You must click that link to complete your signature -- "
     "check your inbox right after you sign.\n\n"
