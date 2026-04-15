@@ -1,47 +1,62 @@
 """
-PEAK Recruiting — MEC/DL Outreach Trigger v3
+PEAK Recruiting -- MEC/DL Outreach Trigger v4
 Runs on forge-cloud (Fly.io). Schedule: every 30 minutes.
 
 TRIGGER RULES (locked 2026-03-23):
 
-MEC OUTREACH — fire when:
+MEC OUTREACH -- fire when:
   drug_test_status IN ('Pass', 'In Progress')
   AND background_status NOT IN ('Not Started', 'Ineligible')
   AND mec_dl_collection_stage IS NULL
   AND status NOT IN ('Rejected', 'Hired', 'Transferred')
+  AND compliance_override IS NOT TRUE
 
-RE-ENGAGEMENT — fire when:
+RE-ENGAGEMENT -- fire when:
   drug_test_status IN ('Expired', 'No Show')
   AND status NOT IN ('Rejected', 'Hired', 'Transferred')
   AND mec_dl_collection_stage IS NULL
+  AND compliance_override IS NOT TRUE
 
 EXCLUDED:
   drug_test_status = 'Not Started' or NULL
   background_status = 'Ineligible'
-  BG Not Started + no background_id (ops gap — flagged to Ops)
+  BG Not Started + no background_id (ops gap -- flagged to Ops)
+  compliance_override = TRUE
 
 TEMPLATE ROUTING (MEC):
-  drug=Pass or In Progress, BG=Eligible           → Template 15
-  drug=In Progress, BG=In Progress/NFR/Consider   → Template 37
-  drug=Pass, BG=In Progress                       → Template 46
+  drug=Pass or In Progress, BG=Eligible           -> Template 15
+  drug=In Progress, BG=In Progress/NFR/Consider   -> Template 37
+  drug=Pass, BG=In Progress                       -> Template 46
 
 TEMPLATE ROUTING (Re-engagement):
-  drug=Expired    → Template 38
-  drug=No Show    → Template 50
+  drug=Expired    -> Template 38
+  drug=No Show    -> Template 50
 
-SMS PLATFORM: RC only. All sends queue to sms_send_queue with migration_status=rc_active.
-Never use twilio_send directly. Locked 2026-03-23.
+DEDUP GUARD (v4):
+  Before queuing any SMS, check sms_send_queue for any pending/sent
+  message to this candidate_id in the last 24 hours. If found, skip.
+  This prevents rapid-fire when stamp_outreach fails.
+
+SMS PLATFORM: Twilio only. migration_status=twilio_active. Locked 2026-04-15.
 """
 
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import pytz
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
-RC_FROM      = '4708574325'
+FROM_NUMBER  = '+14704704766'
 
 HEADERS = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': f'Bearer {SUPABASE_KEY}',
+    'Content-Type': 'application/json',
+    'Prefer': 'return=minimal'
+}
+
+HEADERS_REPR = {
     'apikey': SUPABASE_KEY,
     'Authorization': f'Bearer {SUPABASE_KEY}',
     'Content-Type': 'application/json',
@@ -53,17 +68,16 @@ REENGAGE_STATUSES       = ('Expired', 'No Show')
 EXCLUDE_BG_STATUSES     = ('Not Started', 'Ineligible')
 SKIP_CANDIDATE_STATUSES = ('Rejected', 'Hired', 'Transferred')
 
+DEDUP_WINDOW_HOURS = 24
+
 
 def enforce_blackout(dt):
     """Push any send time outside 7:30AM-7:30PM ET to next 7:30AM ET window."""
-    try:
-        import pytz
-    except ImportError:
-        return dt
     ET = pytz.timezone('America/New_York')
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
     if dt.tzinfo is None:
-        import pytz as _tz
-        dt = _tz.utc.localize(dt)
+        dt = pytz.utc.localize(dt)
     dt_et = dt.astimezone(ET)
     hour, minute = dt_et.hour, dt_et.minute
     in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour > 19) or (hour == 19 and minute >= 30)
@@ -84,8 +98,9 @@ def fetch_candidates():
         f"&drug_test_status=not.in.(Not Started)"
         f"&drug_test_status=not.is.null"
         f"&phone=not.is.null"
+        f"&compliance_override=neq.true"
     )
-    r = requests.get(url, headers=HEADERS)
+    r = requests.get(url, headers=HEADERS_REPR)
     r.raise_for_status()
     return r.json()
 
@@ -93,7 +108,7 @@ def fetch_candidates():
 def get_template(template_id):
     r = requests.get(
         f"{SUPABASE_URL}/rest/v1/message_templates?id=eq.{template_id}&select=body",
-        headers=HEADERS
+        headers=HEADERS_REPR
     )
     r.raise_for_status()
     results = r.json()
@@ -110,36 +125,67 @@ def select_mec_template(drug, bg):
     return 15
 
 
+def already_queued(candidate_id):
+    """
+    DEDUP GUARD: Return True if any MEC-related SMS was already queued
+    or sent to this candidate in the last DEDUP_WINDOW_HOURS hours.
+    Prevents rapid-fire when stamp_outreach fails silently.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
+    r = requests.get(
+        f"{SUPABASE_URL}/rest/v1/sms_send_queue"
+        f"?candidate_id=eq.{candidate_id}"
+        f"&created_by=eq.mec_dl_trigger"
+        f"&status=in.(pending,sent)"
+        f"&created_at=gte.{cutoff}"
+        f"&limit=1"
+        f"&select=id",
+        headers=HEADERS_REPR
+    )
+    try:
+        return len(r.json()) > 0
+    except Exception:
+        return False
+
+
 def queue_sms(candidate_id, phone, template_id, first_name):
-    """Queue SMS to sms_send_queue with rc_active. Never call Twilio directly."""
+    """Queue SMS via Twilio. Returns True on success."""
     body = get_template(template_id)
     if not body:
         print(f'    ERROR: template {template_id} not found')
         return False
 
     body = body.replace('[FIRST]', first_name).replace('[FIRST_NAME]', first_name)
-    now  = datetime.now(timezone.utc).isoformat()
+    now  = datetime.now(timezone.utc)
+    scheduled_for = enforce_blackout(now).isoformat()
 
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/sms_send_queue",
         headers=HEADERS,
         json={
-            'candidate_id':   candidate_id,
-            'to_number':      str(phone),
-            'from_number':    RC_FROM,
-            'body':           body,
-            'template_id':    template_id,
-            'template_name':  f'template_{template_id}',
-            'status':         'pending',
-            'scheduled_for':  enforce_blackout(now if hasattr(now, 'hour') else datetime.fromisoformat(now.replace('Z',''))).isoformat(),
-            'created_by':     'mec_dl_trigger',
-            'migration_status': 'rc_active'
+            'candidate_id':     candidate_id,
+            'to_number':        str(phone),
+            'from_number':      FROM_NUMBER,
+            'body':             body,
+            'template_id':      template_id,
+            'template_name':    f'MEC Outreach T{template_id}',
+            'status':           'pending',
+            'scheduled_for':    scheduled_for,
+            'created_by':       'mec_dl_trigger',
+            'migration_status': 'twilio_active'
         }
     )
-    return r.status_code in (200, 201)
+    if r.status_code not in (200, 201):
+        print(f'    ERROR: sms_send_queue insert failed ({r.status_code}): {r.text[:200]}')
+        return False
+    return True
 
 
 def stamp_outreach(candidate_id, template_id, stage):
+    """
+    Stamp mec_dl_collection_stage on candidate.
+    CRITICAL: checks response code. If this fails, dedup guard catches next run.
+    """
     now = datetime.now(timezone.utc).isoformat()
     payload = {
         'mec_dl_collection_stage': stage,
@@ -148,10 +194,16 @@ def stamp_outreach(candidate_id, template_id, stage):
     }
     if stage == 'OUTREACH_SENT':
         payload['mec_form_sent_at'] = now
-    requests.patch(
+
+    r = requests.patch(
         f"{SUPABASE_URL}/rest/v1/candidates?id=eq.{candidate_id}",
-        headers=HEADERS, json=payload
+        headers=HEADERS,
+        json=payload
     )
+    if r.status_code not in (200, 204):
+        print(f'    ERROR: stamp_outreach failed for candidate {candidate_id} ({r.status_code}): {r.text[:200]}')
+        return False
+    return True
 
 
 def flag_ops_gap(candidate_id, first, last, client_id):
@@ -159,12 +211,12 @@ def flag_ops_gap(candidate_id, first, last, client_id):
         f"{SUPABASE_URL}/rest/v1/forge_memory",
         headers=HEADERS,
         json={
-            'session_date': datetime.now(timezone.utc).date().isoformat(),
-            'category':     'ops_note',
-            'subject':      f'BG not ordered — {first} {last}',
-            'content':      (
+            'session_date':  datetime.now(timezone.utc).date().isoformat(),
+            'category':      'ops_note',
+            'subject':       f'BG not ordered -- {first} {last}',
+            'content':       (
                 f'{first} {last} (id {candidate_id}, {client_id}) has drug screen activity '
-                f'but background_id is null/empty — BG never ordered in FADV. '
+                f'but background_id is null/empty -- BG never ordered in FADV. '
                 f'Action: order BG manually. MEC outreach held.'
             ),
             'target_thread': 'PEAK Ops'
@@ -187,15 +239,16 @@ def log_run(summary):
 
 
 def run():
-    print(f"[{datetime.now()}] MEC/DL trigger v3 — RC queue only")
+    print(f"[{datetime.now()}] MEC/DL trigger v4 -- Twilio only, dedup guard active")
 
     candidates = fetch_candidates()
     print(f"Found {len(candidates)} candidates to evaluate")
 
-    mec_queued    = []
+    mec_queued      = []
     reengage_queued = []
-    ops_gaps      = []
-    failed        = []
+    ops_gaps        = []
+    deduped         = []
+    failed          = []
 
     for c in candidates:
         cid    = c['id']
@@ -210,10 +263,16 @@ def run():
         if not phone or len(phone) < 10 or phone == '0000000000':
             continue
 
+        # DEDUP GUARD -- check before any send attempt
+        if already_queued(cid):
+            print(f"  DEDUP {cid} {first} {last} -- already queued in last {DEDUP_WINDOW_HOURS}hrs, skipping")
+            deduped.append(f"{first} {last} (id {cid})")
+            continue
+
         # Re-engagement path
         if drug in REENGAGE_STATUSES:
             template_id = 38 if drug == 'Expired' else 50
-            print(f"  REENGAGE {cid} {first} {last} drug={drug} → T{template_id}")
+            print(f"  REENGAGE {cid} {first} {last} drug={drug} -> T{template_id}")
             ok = queue_sms(cid, phone, template_id, first)
             if ok:
                 stamp_outreach(cid, template_id, 'REENGAGEMENT_SENT')
@@ -225,7 +284,7 @@ def run():
         if bg == 'Ineligible':
             continue
 
-        # Ops gap — drug ran, BG never ordered
+        # Ops gap -- drug ran, BG never ordered
         if drug in MEC_TRIGGER_STATUSES and bg == 'Not Started' and not bg_id:
             flag_ops_gap(cid, first, last, client)
             ops_gaps.append(f"{first} {last} (id {cid}, {client})")
@@ -234,7 +293,7 @@ def run():
         # MEC outreach path
         if drug in MEC_TRIGGER_STATUSES and bg not in EXCLUDE_BG_STATUSES:
             template_id = select_mec_template(drug, bg)
-            print(f"  MEC {cid} {first} {last} drug={drug} bg={bg} → T{template_id}")
+            print(f"  MEC {cid} {first} {last} drug={drug} bg={bg} -> T{template_id}")
             ok = queue_sms(cid, phone, template_id, first)
             if ok:
                 stamp_outreach(cid, template_id, 'OUTREACH_SENT')
@@ -243,11 +302,12 @@ def run():
                 failed.append(f"{first} {last} (id {cid})")
 
     summary = (
-        f"MEC/DL trigger v3 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} via RC. "
-        f"MEC queued: {len(mec_queued)}. Re-engage queued: {len(reengage_queued)}. "
-        f"Ops gaps: {len(ops_gaps)}. Failed: {len(failed)}.\n"
+        f"MEC/DL trigger v4 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} via Twilio. "
+        f"MEC queued: {len(mec_queued)}. Re-engage: {len(reengage_queued)}. "
+        f"Deduped: {len(deduped)}. Ops gaps: {len(ops_gaps)}. Failed: {len(failed)}.\n"
         f"MEC: {', '.join(mec_queued) or 'none'}.\n"
         f"Re-engage: {', '.join(reengage_queued) or 'none'}.\n"
+        f"Deduped: {', '.join(deduped) or 'none'}.\n"
         f"Ops gaps: {', '.join(ops_gaps) or 'none'}.\n"
         f"Failed: {', '.join(failed) or 'none'}."
     )
