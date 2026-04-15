@@ -67,6 +67,7 @@ def fetch_candidates():
         f"mec_dl_collection_stage,mec_dl_outreach_sent_at,"
         f"mec_dl_fup1_sent_at,mec_dl_fup2_sent_at,mec_dl_escalated_at"
         f"&mec_dl_collection_stage=eq.OUTREACH_SENT"
+        f"&mec_uploaded=neq.1"
         f"&status=not.in.(Rejected,Hired,Transferred)"
         f"&mec_dl_outreach_sent_at=not.is.null"
         f"&phone=not.is.null"
