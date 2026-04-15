@@ -959,7 +959,7 @@ def client_dashboard(token):
 
     body = (
         (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed. Click a name to view contact details.") if badge else "") +
-        (_sec("In Progress", "#185FA5", _tbl(prog, False), "Background screening or drug test currently underway.") if prog else "") +
+        (_sec("In Progress", "#185FA5", _tbl(prog, True), "Background screening or drug test currently underway.") if prog else "") +
         (_sec("Under Review", "#BA7517", rev_block) if rev else "") +
         (_sec("Pre-Submission", "#aaa", pre_block) if pre_count else "") +
         (_sec("Hired", "#0F6E56", hired_block, "Candidates marked as hired. Shown for record-keeping.") if hired else "") +
