@@ -5,3 +5,15 @@ gcic_output/
 fonts/
 gcic_template.pdf
 fadv/
+.DS_Store
+client_secret.json
+credentials.json
+__pycache__/
+*.pyc
+*.pycache
+infra/gmail_reauth.py
+scripts/indeed_url_fetcher.py
+scripts/gcic_storage_backfill.py
+scripts/indeed_score_attachments.py
+scripts/indeed_score_provisional.py
+scripts/rc_data_capture.py
