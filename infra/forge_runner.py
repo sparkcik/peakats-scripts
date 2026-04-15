@@ -825,7 +825,7 @@ def _bc(v):
 def _ck(v):
     return '<span style="color:#0F6E56;font-weight:700">&#10003;</span>' if v == 1 else '<span style="color:#e0e0e0">--</span>'
 
-def _tr(c, am, cls=""):
+def _tr(c, am, cls="", hide_contacts=False):
     cid = c["id"]
     sv = am.get(cid, {})
     a = sv.get("action") or "none"
@@ -847,7 +847,7 @@ def _tr(c, am, cls=""):
     sc = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{sc};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
     return f"""<tr class="{cls}" id="row-{cid}">
-      <td><button class="name-btn" onclick="showCard({cid})">{c.get("first_name","")} {c.get("last_name","")}</button></td>
+      <td>{"<button class='name-btn' onclick='showCard("+str(cid)+")'>"+c.get("first_name","")+" "+c.get("last_name","")+"</button>" if not hide_contacts else c.get("first_name","")+" "+c.get("last_name","")}</td>
       <td>{station_pill}</td>
       <td>{_pill(c.get("rwp_score"), c.get("rwp_classification"))}</td>
       <td>{_bc(c.get("background_status"))}</td>
@@ -881,11 +881,12 @@ def _tbl(rows, extra=True):
 @app.route("/d/<token>", methods=["GET"])
 def client_dashboard(token):
     # Validate token
-    toks = _supa_get(f"client_tokens?token=eq.{token}&active=eq.true&select=client_id,label")
+    toks = _supa_get(f"client_tokens?token=eq.{token}&active=eq.true&select=client_id,label,hide_contacts")
     if not isinstance(toks, list) or not toks:
         return Response("<html><body><h2>Invalid or expired link.</h2></body></html>", status=403, content_type="text/html")
     client_id = toks[0]["client_id"]
     label = toks[0]["label"]
+    hide_contacts = bool(toks[0].get("hide_contacts", False))
 
     # Candidates: show only where BG has been submitted
     cands = _supa_get(
@@ -926,12 +927,12 @@ def client_dashboard(token):
         dr = (c.get("drug_test_status") or "").lower()
         ca = am.get(c["id"], {}).get("action")
         if ca == "hired":
-            hired.append(_tr(c, am, "badge-bg"))
+            hired.append(_tr(c, am, "badge-bg", hide_contacts))
             continue
         if bg == "eligible" and dr in ("pass", "negative/pass"):
-            badge.append(_tr(c, am, "badge-bg"))
+            badge.append(_tr(c, am, "badge-bg", hide_contacts))
         elif bg == "in progress" or (bg == "needs further review" and dr in ("in progress", "pass", "negative/pass")):
-            prog.append(_tr(c, am))
+            prog.append(_tr(c, am, hide_contacts=hide_contacts))
         else:
             rev.append(c)
 
@@ -941,8 +942,8 @@ def client_dashboard(token):
     cdata_js = json.dumps({str(k): {
         "first_name": v.get("first_name",""),
         "last_name": v.get("last_name",""),
-        "phone": v.get("phone",""),
-        "email": v.get("email",""),
+        "phone": v.get("phone","") if not hide_contacts else "",
+        "email": v.get("email","") if not hide_contacts else "",
         "rwp_classification": v.get("rwp_classification",""),
         "rwp_score": v.get("rwp_score"),
     } for k,v in cdata.items()})
@@ -958,7 +959,7 @@ def client_dashboard(token):
     hired_block = _tbl(hired, True) if hired else ""
 
     body = (
-        (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed. Click a name to view contact details.") if badge else "") +
+        (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed." + ("" if hide_contacts else " Click a name to view contact details.")) if badge else "") +
         (_sec("In Progress", "#185FA5", _tbl(prog, True), "Background screening or drug test currently underway.") if prog else "") +
         (_sec("Under Review", "#BA7517", rev_block) if rev else "") +
         (_sec("Pre-Submission", "#aaa", pre_block) if pre_count else "") +
