@@ -1042,7 +1042,7 @@ td:first-child{{text-align:left}}
 </div>
 <div class="hdr">
   <div><h1>Candidate Pipeline</h1><p>{label}</p></div>
-  <div class="hdr-r"><strong>{total} active candidates</strong>Updated {now}</div>
+  <div class="hdr-r"><strong>{total} active candidates</strong>Updated {now} &bull; v1.4</div>
 </div>
 <div class="stats">
   <div class="stat"><div class="sv" style="color:#c8a84b">{len(badge)}</div><div class="sl">Badge Ready</div></div>
