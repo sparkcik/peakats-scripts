@@ -990,55 +990,56 @@ def client_dashboard(token):
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:'DM Sans',sans-serif;background:#f5f4f0;color:#1a1a1a;min-height:100vh}}
-.hdr{{background:#1a3a2a;padding:22px 32px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}}
+body{{font-family:'DM Sans',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}}
+.hdr{{background:#0d1f16;border-bottom:1px solid rgba(200,168,75,0.2);padding:22px 32px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}}
 .hdr h1{{font-family:'DM Sans',sans-serif;font-weight:600;color:#fff;font-size:22px;letter-spacing:-0.3px}}
 .hdr p{{color:#c8a84b;font-size:13px;margin-top:3px}}
-.hdr-r{{text-align:right;color:#8aab96;font-size:12px}}
+.hdr-r{{text-align:right;color:#5a8a6a;font-size:12px}}
 .hdr-r strong{{color:#c8a84b;font-size:15px;display:block;margin-bottom:3px}}
-.stats{{background:#1a3a2a;padding:0 32px 20px;display:flex;gap:14px;flex-wrap:wrap}}
-.stat{{background:rgba(255,255,255,0.08);border:0.5px solid rgba(200,168,75,0.3);border-radius:8px;padding:12px 20px}}
+.stats{{background:#0d1f16;border-bottom:1px solid rgba(200,168,75,0.2);padding:0 32px 20px;display:flex;gap:14px;flex-wrap:wrap}}
+.stat{{background:rgba(255,255,255,0.05);border:0.5px solid rgba(200,168,75,0.25);border-radius:8px;padding:12px 20px}}
 .sv{{font-size:26px;font-weight:600;color:#fff}}
-.sl{{font-size:11px;color:#8aab96;margin-top:2px}}
+.sl{{font-size:11px;color:#5a8a6a;margin-top:2px}}
 .body{{padding:28px 32px;max-width:1200px;margin:0 auto}}
 .section{{margin-bottom:36px}}
 .sec-hdr{{display:flex;align-items:center;gap:10px;margin-bottom:12px}}
 .dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
-.sec-title{{font-size:16px;font-weight:600;color:#1a3a2a}}
-.sec-note{{font-size:13px;color:#777;margin:0 0 12px}}
-.tbl-wrap{{overflow-x:auto;border-radius:8px;border:0.5px solid #e5e7eb}}
+.sec-title{{font-size:16px;font-weight:600;color:#e2e8f0}}
+.sec-note{{font-size:13px;color:#64748b;margin:0 0 12px}}
+.tbl-wrap{{overflow-x:auto;border-radius:8px;border:0.5px solid #1e2d3d}}
 table{{width:100%;border-collapse:collapse;font-size:12px;min-width:860px}}
-th{{padding:8px 10px;text-align:center;font-weight:600;color:#1a3a2a;background:#f9f9f7;border-bottom:1.5px solid #c8a84b;white-space:nowrap}}
+th{{padding:8px 10px;text-align:center;font-weight:600;color:#94a3b8;background:#141c26;border-bottom:1.5px solid rgba(200,168,75,0.4);white-space:nowrap}}
 th:first-child{{text-align:left}}
-td{{padding:8px 10px;text-align:center;border-bottom:0.5px solid #eee;white-space:nowrap;vertical-align:middle}}
+td{{padding:8px 10px;text-align:center;border-bottom:0.5px solid #1a2332;white-space:nowrap;vertical-align:middle;color:#cbd5e1}}
 td:first-child{{text-align:left}}
+tr:hover td{{background:#141c26}}
 .pill{{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;color:#fff;display:inline-block}}
-.elig{{color:#0F6E56;font-weight:600}}.inelig{{color:#A32D2D;font-weight:600}}.prog{{color:#BA7517;font-weight:600}}
-.hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid #e0e0e0;font-size:11px;font-family:'DM Sans',sans-serif;background:#fff;cursor:pointer;width:118px}}
-.hire-sel.s-contacting{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
-.hire-sel.s-hired{{background:#e8faf2;border-color:#0F6E56;color:#0F6E56;font-weight:600}}
-.hire-sel.s-rejected{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
-.notes-input{{width:150px;padding:4px 6px;border-radius:6px;border:1px solid #e0e0e0;font-size:11px;font-family:'DM Sans',sans-serif;resize:none;height:32px}}
+.elig{{color:#34d399;font-weight:600}}.inelig{{color:#f87171;font-weight:600}}.prog{{color:#fbbf24;font-weight:600}}
+.hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid #2d3748;font-size:11px;font-family:'DM Sans',sans-serif;background:#1a2332;color:#cbd5e1;cursor:pointer;width:118px}}
+.hire-sel.s-contacting{{background:#1e3a5f;border-color:#3b82f6;color:#60a5fa;font-weight:600}}
+.hire-sel.s-hired{{background:#1a3a2a;border-color:#34d399;color:#34d399;font-weight:600}}
+.hire-sel.s-rejected{{background:#3b1a1a;border-color:#f87171;color:#f87171;font-weight:600}}
+.notes-input{{width:150px;padding:4px 6px;border-radius:6px;border:1px solid #2d3748;font-size:11px;font-family:'DM Sans',sans-serif;resize:none;height:32px;background:#1a2332;color:#cbd5e1}}
 .notes-input:focus{{outline:none;border-color:#c8a84b}}
-.sv-flash{{font-size:10px;color:#0F6E56;margin-left:3px;opacity:0;transition:opacity 0.3s}}
+.sv-flash{{font-size:10px;color:#34d399;margin-left:3px;opacity:0;transition:opacity 0.3s}}
 .sv-flash.show{{opacity:1}}
-.reroute-btn{{padding:3px 7px;border-radius:5px;border:1px solid #BA7517;background:#fff8f0;color:#BA7517;font-size:10px;cursor:pointer;margin-top:3px;display:none}}
-.reroute-btn.show{{display:inline-block}}.reroute-btn.on{{background:#BA7517;color:#fff}}
-.name-btn{{background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#1a3a2a;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#c8a84b;padding:0}}
-.name-btn:hover{{color:#0F6E56}}
-.overlay{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:999}}
+.reroute-btn{{padding:3px 7px;border-radius:5px;border:1px solid #d97706;background:#2d1f0a;color:#fbbf24;font-size:10px;cursor:pointer;margin-top:3px;display:none}}
+.reroute-btn.show{{display:inline-block}}.reroute-btn.on{{background:#d97706;color:#fff}}
+.name-btn{{background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#93c5fd;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#c8a84b;padding:0}}
+.name-btn:hover{{color:#60a5fa}}
+.overlay{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999}}
 .overlay.show{{display:block}}
-.ccard{{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.18);padding:24px 28px;z-index:1000;min-width:280px}}
+.ccard{{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a2332;border:1px solid #2d3748;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.5);padding:24px 28px;z-index:1000;min-width:280px}}
 .ccard.show{{display:block}}
-.cc-name{{font-family:'DM Serif Display',serif;font-size:18px;color:#1a3a2a;margin-bottom:16px;padding-right:24px}}
+.cc-name{{font-family:'DM Serif Display',serif;font-size:18px;color:#e2e8f0;margin-bottom:16px;padding-right:24px}}
 .cc-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:13px}}
-.cc-lbl{{color:#888;width:64px;flex-shrink:0;font-size:12px}}
-.cc-val a{{color:#185FA5;text-decoration:none}}
-.cc-close{{position:absolute;top:12px;right:14px;cursor:pointer;color:#aaa;font-size:20px;line-height:1;background:none;border:none}}
-.rev-box{{background:#fffbf0;border:0.5px solid #e5e7eb;border-radius:8px;padding:16px 20px;display:flex;align-items:center;gap:16px}}
-.rev-num{{font-size:32px;font-weight:600;color:#BA7517;flex-shrink:0}}
-.rev-txt{{font-size:13px;color:#666;line-height:1.6}}
-.footer{{text-align:center;padding:28px;font-size:12px;color:#bbb}}
+.cc-lbl{{color:#64748b;width:64px;flex-shrink:0;font-size:12px}}
+.cc-val a{{color:#60a5fa;text-decoration:none}}
+.cc-close{{position:absolute;top:12px;right:14px;cursor:pointer;color:#64748b;font-size:20px;line-height:1;background:none;border:none}}
+.rev-box{{background:#1a2000;border:0.5px solid #2d3a00;border-radius:8px;padding:16px 20px;display:flex;align-items:center;gap:16px}}
+.rev-num{{font-size:32px;font-weight:600;color:#fbbf24;flex-shrink:0}}
+.rev-txt{{font-size:13px;color:#94a3b8;line-height:1.6}}
+.footer{{text-align:center;padding:28px;font-size:12px;color:#475569}}
 .footer strong{{color:#c8a84b}}
 @media(max-width:700px){{.hdr,.stats,.body{{padding-left:16px;padding-right:16px}}}}
 </style>
