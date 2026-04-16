@@ -838,11 +838,13 @@ def _tr(c, am, cls="", hide_contacts=False):
     station_map = {
         'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
         'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'GVL',
+        'rade_logistics': 'AUS',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
     station_colors = {
-        'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#BA7517',
+        'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#c8a84b',
+        'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
     }
     sc = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{sc};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
@@ -889,8 +891,12 @@ def client_dashboard(token):
     hide_contacts = bool(toks[0].get("hide_contacts", False))
 
     # Candidates: show only where BG has been submitted
+    LEGACY_COMBINED = client_id == "legacy_combined"
+    LEGACY_LOCS = ["legacy_chattanooga", "legacy_ooltewah", "legacy_tuscaloosa"]
+    LEGACY_COLORS = {"legacy_chattanooga": "#185FA5", "legacy_ooltewah": "#0F6E56", "legacy_tuscaloosa": "#c8a84b"}
+    cid_filter = f"client_id=in.({','.join(LEGACY_LOCS)})" if LEGACY_COMBINED else f"client_id=eq.{client_id}"
     cands = _supa_get(
-        f"candidates?client_id=eq.{client_id}"
+        f"candidates?{cid_filter}"
         "&status=not.in.(Rejected,Hired,Transferred)"
         "&background_status=in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
@@ -904,7 +910,7 @@ def client_dashboard(token):
 
     # Pre-submission count
     pre = _supa_get(
-        f"candidates?client_id=eq.{client_id}"
+        f"candidates?{cid_filter}"
         "&status=not.in.(Rejected,Hired,Transferred)"
         "&background_status=not.in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
@@ -957,6 +963,11 @@ def client_dashboard(token):
       In pipeline but background screen not yet submitted. PEAK is working to vet and advance these candidates.</div></div>''' if pre_count else ""
 
     hired_block = _tbl(hired, True) if hired else ""
+
+    legend_html = ""
+    if LEGACY_COMBINED:
+        legend_html = '<div style="display:flex;gap:20px;padding:10px 32px;background:#f0efe9;border-bottom:1px solid #ddd;font-size:12px;">' +             ''.join([f'<span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:{LEGACY_COLORS[loc]};display:inline-block"></span>{lab}</span>'
+                     for loc, lab in [('legacy_chattanooga','Chattanooga'),('legacy_ooltewah','Ooltewah'),('legacy_tuscaloosa','Tuscaloosa')]]) + '</div>'
 
     body = (
         (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed." + ("" if hide_contacts else " Click a name to view contact details.")) if badge else "") +
@@ -1052,7 +1063,7 @@ td:first-child{{text-align:left}}
   <div class="stat"><div class="sv" style="color:#0F6E56">{len(hired)}</div><div class="sl">Hired</div></div>
   <div class="stat"><div class="sv" style="color:#aaa">{pre_count}</div><div class="sl">Pre-Submission</div></div>
 </div>
-<div class="body">{body}</div>
+{legend_html}<div class="body">{body}</div>
 <div class="footer">Powered by <strong>PEAKrecruiting</strong> &bull; Questions? (470) 470-4766</div>
 <script>
 const TOKEN="{token}";
