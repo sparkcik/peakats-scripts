@@ -687,6 +687,185 @@ def twilio_voice_missed():
     return Response(TWIML_GREETING, mimetype="application/xml")
 
 
+@app.route("/legal", methods=["GET"])
+def legal_tracker():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Legal Resource Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;padding:24px 16px}
+.wrap{max-width:900px;margin:0 auto}
+h1{font-size:20px;font-weight:600;color:#fff;margin-bottom:4px}
+.sub{font-size:13px;color:#64748b;margin-bottom:20px}
+.script-box{background:#0d1f16;border:1px solid rgba(200,168,75,0.3);border-radius:10px;padding:16px 20px;margin-bottom:24px}
+.script-label{font-size:11px;font-weight:600;color:#c8a84b;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px}
+.script-text{font-size:14px;color:#e2e8f0;line-height:1.7;font-style:italic}
+.copy-btn{margin-top:10px;font-size:12px;padding:6px 14px;border-radius:6px;border:0.5px solid rgba(200,168,75,0.4);background:rgba(200,168,75,0.1);color:#c8a84b;cursor:pointer;font-family:inherit}
+.copy-btn:hover{background:rgba(200,168,75,0.2)}
+.stats{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.stat{background:#141c26;border-radius:8px;padding:10px 16px;min-width:110px}
+.stat-n{font-size:22px;font-weight:600;color:#fff}
+.stat-n.called{color:#34d399}
+.stat-n.msg{color:#fbbf24}
+.stat-l{font-size:11px;color:#64748b;margin-top:2px}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.fb{font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid #2d3748;background:#141c26;color:#94a3b8;cursor:pointer;font-family:inherit}
+.fb.active{background:#1a2332;color:#e2e8f0;border-color:#4a5568}
+.card{background:#141c26;border:0.5px solid #1e2d3d;border-radius:10px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s}
+.card:hover{border-color:#2d3748}
+.card.st-called{border-left:3px solid #34d399}
+.card.st-left-msg{border-left:3px solid #fbbf24}
+.card.st-no-answer{border-left:3px solid #64748b}
+.card.st-appt-set{border-left:3px solid #60a5fa}
+.card-top{display:grid;grid-template-columns:36px 80px 1fr auto;gap:12px;align-items:start;padding:12px 14px}
+.pri{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;margin-top:2px}
+.pri.free{background:#0d1f16;color:#34d399;border:1px solid #0F6E56}
+.pri.paid{background:#1a1500;color:#fbbf24;border:1px solid #854F0B}
+.badge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:6px;display:inline-block;margin-top:3px}
+.badge.free{background:#0d1f16;color:#34d399;border:0.5px solid #0F6E56}
+.badge.paid{background:#1a1500;color:#fbbf24;border:0.5px solid #854F0B}
+.org-name{font-size:14px;font-weight:500;color:#e2e8f0;margin-bottom:3px}
+.org-meta{font-size:12px;color:#64748b;margin-bottom:2px}
+.org-what{font-size:12px;color:#94a3b8}
+.org-note{font-size:11px;color:#475569;font-style:italic;margin-top:2px}
+.actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:130px}
+select{font-size:12px;padding:5px 8px;border-radius:6px;border:0.5px solid #2d3748;background:#1a2332;color:#cbd5e1;cursor:pointer;width:130px;font-family:inherit}
+.call-btn{font-size:12px;color:#60a5fa;background:#1e3a5f;padding:5px 10px;border-radius:6px;white-space:nowrap;border:none;cursor:pointer;width:130px;text-align:center;font-family:inherit}
+.call-btn:hover{background:#1e4a7f}
+.notes-wrap{padding:0 14px 12px}
+textarea{width:100%;font-size:13px;padding:8px 10px;border-radius:6px;border:0.5px solid #1e2d3d;background:#0f1117;color:#cbd5e1;resize:vertical;min-height:80px;font-family:'DM Sans',sans-serif;line-height:1.5}
+textarea:focus{outline:none;border-color:#4a5568}
+textarea::placeholder{color:#334155}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Legal Resource Tracker</h1>
+  <p class="sub">Foreclosure defense and Chapter 13 contacts</p>
+
+  <div class="script-box">
+    <div class="script-label">Hardship Script -- Copy and say this on every call</div>
+    <div class="script-text" id="script-text">"86-year-old mother on low income, hospitalized and in rehab for 2 months, Rocket Mortgage foreclosure sale only weeks away. Need emergency Chapter 13 automatic stay filing to stop the sale and cure arrears. Can you help file or see her right away?"</div>
+    <button class="copy-btn" onclick="copyScript()">Copy script</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div class="filters">
+    <button class="fb active" onclick="setFilter('all',this)">All</button>
+    <button class="fb" onclick="setFilter('free',this)">Free only</button>
+    <button class="fb" onclick="setFilter('paid',this)">Paid only</button>
+    <button class="fb" onclick="setFilter('called',this)">Called</button>
+    <button class="fb" onclick="setFilter('pending',this)">Not yet called</button>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+const DATA=[
+  {id:1,type:'free',org:'Georgia Legal Services Program',loc:'Savannah / Chatham',phone:'9126512180',phoneDisplay:'(912) 651-2180',what:'Free Ch13 filing, foreclosure defense, low-income representation',note:'Local Savannah office -- call first for Chatham'},
+  {id:2,type:'free',org:'Elderly Legal Assistance Program (ELAP)',loc:'Chatham / Savannah area',phone:'8882208399',phoneDisplay:'1-888-220-8399',what:'Free legal help for 60+, Ch13 referral & housing issues',note:'Seniors 60+ -- perfect for Mom, fast intake'},
+  {id:3,type:'free',org:'Georgia Senior Legal Aid Hotline',loc:'Statewide (Atlanta)',phone:'4043899992',phoneDisplay:'(404) 389-9992',what:'Free advice & referral for seniors facing foreclosure',note:'Mon-Thu mornings; 60+ priority'},
+  {id:4,type:'free',org:'Atlanta Legal Aid Society',loc:'Atlanta Metro',phone:'4045245811',phoneDisplay:'(404) 524-5811',what:'Free foreclosure help, Ch13 coordination',note:'Strong on Rocket cases; low-income'},
+  {id:5,type:'free',org:'Georgia Legal Services Program Statewide',loc:'Statewide',phone:'18334577529',phoneDisplay:'1-833-457-7529',what:'Routes to local free attorney for Ch13/foreclosure',note:'Backup if Savannah line busy'},
+  {id:6,type:'paid',org:'Gastin & Hill, Attorneys at Law',loc:'Savannah',phone:'9122320203',phoneDisplay:'(912) 232-0203',what:'Emergency Chapter 13, foreclosure stop',note:'Free consult; experienced in Savannah sales'},
+  {id:7,type:'paid',org:'Barbara B. Braziel Law',loc:'Savannah / Chatham',phone:'8335221069',phoneDisplay:'(833) 522-1069',what:'Chapter 13 filings, debt relief',note:'Free initial consult; senior-friendly'},
+  {id:8,type:'paid',org:'Law Office of Jeffrey S. Hanna',loc:'Savannah',phone:'9122336515',phoneDisplay:'(912) 233-6515',what:'Chapter 13 & foreclosure defense',note:'Free consult; stops imminent sales'},
+  {id:9,type:'paid',org:'Craig Black Law Firm',loc:'Atlanta (statewide)',phone:'6788881778',phoneDisplay:'(678) 888-1778',what:'Senior Ch13 emergency filings',note:'Free consult; $0-down options common'},
+  {id:10,type:'paid',org:'The Kent Law Firm',loc:'Atlanta',phone:'4045047090',phoneDisplay:'(404) 504-7090',what:'40+ years stopping foreclosures via Ch13',note:'Free consult; high success rate'},
+];
+
+let state={};
+let filter='all';
+
+function load(){
+  DATA.forEach(r=>{
+    try{const s=localStorage.getItem('legal_'+r.id);state[r.id]=s?JSON.parse(s):{status:'',notes:''};}
+    catch{state[r.id]={status:'',notes:''};}
+  });
+  render();
+}
+
+function save(id){try{localStorage.setItem('legal_'+id,JSON.stringify(state[id]));}catch(e){}}
+
+function setFilter(f,btn){
+  filter=f;
+  document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  render();
+}
+
+function copyScript(){
+  const t=document.getElementById('script-text').innerText;
+  navigator.clipboard.writeText(t).then(()=>{
+    const b=event.target;b.textContent='Copied!';
+    setTimeout(()=>b.textContent='Copy script',2000);
+  });
+}
+
+function render(){
+  const called=Object.values(state).filter(s=>s.status==='called').length;
+  const leftMsg=Object.values(state).filter(s=>s.status==='left-msg').length;
+  const noAnswer=Object.values(state).filter(s=>s.status==='no-answer').length;
+  const appt=Object.values(state).filter(s=>s.status==='appt-set').length;
+  document.getElementById('stats').innerHTML=
+    `<div class="stat"><div class="stat-n called">${called}</div><div class="stat-l">Called</div></div>`+
+    `<div class="stat"><div class="stat-n msg">${leftMsg}</div><div class="stat-l">Left message</div></div>`+
+    `<div class="stat"><div class="stat-n" style="color:#60a5fa">${appt}</div><div class="stat-l">Appt set</div></div>`+
+    `<div class="stat"><div class="stat-n">${noAnswer}</div><div class="stat-l">No answer</div></div>`;
+
+  const rows=DATA.filter(r=>{
+    if(filter==='free') return r.type==='free';
+    if(filter==='paid') return r.type==='paid';
+    if(filter==='called') return state[r.id].status==='called';
+    if(filter==='pending') return !state[r.id].status;
+    return true;
+  });
+
+  document.getElementById('list').innerHTML=rows.map(r=>{
+    const s=state[r.id];
+    const cls=s.status?'st-'+s.status:'';
+    return `<div class="card ${cls}">
+      <div class="card-top">
+        <div class="pri ${r.type}">${r.id}</div>
+        <div><span class="badge ${r.type}">${r.type==='free'?'FREE':'PAID'}</span></div>
+        <div>
+          <div class="org-name">${r.org}</div>
+          <div class="org-meta">${r.loc} &bull; ${r.phoneDisplay}</div>
+          <div class="org-what">${r.what}</div>
+          <div class="org-note">${r.note}</div>
+        </div>
+        <div class="actions">
+          <select onchange="upStatus(${r.id},this.value)">
+            <option value="" ${!s.status?'selected':''}>-- status --</option>
+            <option value="called" ${s.status==='called'?'selected':''}>Called</option>
+            <option value="left-msg" ${s.status==='left-msg'?'selected':''}>Left message</option>
+            <option value="no-answer" ${s.status==='no-answer'?'selected':''}>No answer</option>
+            <option value="not-available" ${s.status==='not-available'?'selected':''}>Not available</option>
+            <option value="appt-set" ${s.status==='appt-set'?'selected':''}>Appt set</option>
+          </select>
+          <button class="call-btn" onclick="window.location.href='tel:+1${r.phone}'">Call ${r.phoneDisplay}</button>
+        </div>
+      </div>
+      <div class="notes-wrap">
+        <textarea placeholder="Notes -- what they said, attorney name, next steps, appointment time..." onblur="upNotes(${r.id},this.value)">${s.notes}</textarea>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function upStatus(id,val){state[id].status=val;save(id);render();}
+function upNotes(id,val){state[id].notes=val;save(id);}
+load();
+</script>
+</body>
+</html>"""
+    return Response(html, content_type='text/html')
+
+
 # -- Scheduler ----------------------------------------------------------------
 # NOTE: pg_cron is the primary scheduler (hits forge-bridge every 15/30 min).
 # The internal scheduler below is a backup layer only.
