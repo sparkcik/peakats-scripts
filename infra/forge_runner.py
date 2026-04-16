@@ -837,8 +837,8 @@ def _tr(c, am, cls="", hide_contacts=False):
     rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
     station_map = {
         'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
-        'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'GVL',
-        'rade_logistics': 'AUS',
+        'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
+        'rade_logistics': 'BRZ',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
@@ -891,10 +891,25 @@ def client_dashboard(token):
     hide_contacts = bool(toks[0].get("hide_contacts", False))
 
     # Candidates: show only where BG has been submitted
-    LEGACY_COMBINED = client_id == "legacy_combined"
-    LEGACY_LOCS = ["legacy_chattanooga", "legacy_ooltewah", "legacy_tuscaloosa"]
-    LEGACY_COLORS = {"legacy_chattanooga": "#185FA5", "legacy_ooltewah": "#0F6E56", "legacy_tuscaloosa": "#c8a84b"}
-    cid_filter = f"client_id=in.({','.join(LEGACY_LOCS)})" if LEGACY_COMBINED else f"client_id=eq.{client_id}"
+    # Generic combined-client map: add any new multi-location clients here
+    COMBINED_CLIENTS = {
+        "legacy_combined": {
+            "locs": ["legacy_chattanooga", "legacy_ooltewah", "legacy_tuscaloosa"],
+            "colors": {"legacy_chattanooga": "#185FA5", "legacy_ooltewah": "#0F6E56", "legacy_tuscaloosa": "#c8a84b"},
+            "labels": {"legacy_chattanooga": "Chattanooga", "legacy_ooltewah": "Ooltewah", "legacy_tuscaloosa": "Tuscaloosa"},
+        },
+        "rade_combined": {
+            "locs": ["gods_vision", "rade_logistics"],
+            "colors": {"gods_vision": "#BA7517", "rade_logistics": "#185FA5"},
+            "labels": {"gods_vision": "Austell", "rade_logistics": "Braselton"},
+        },
+    }
+    IS_COMBINED = client_id in COMBINED_CLIENTS
+    COMBINED_CFG = COMBINED_CLIENTS.get(client_id, {})
+    COMBINED_LOCS = COMBINED_CFG.get("locs", [])
+    COMBINED_COLORS = COMBINED_CFG.get("colors", {})
+    COMBINED_LABELS = COMBINED_CFG.get("labels", {})
+    cid_filter = f"client_id=in.({','.join(COMBINED_LOCS)})" if IS_COMBINED else f"client_id=eq.{client_id}"
     cands = _supa_get(
         f"candidates?{cid_filter}"
         "&status=not.in.(Rejected,Hired,Transferred)"
@@ -965,9 +980,9 @@ def client_dashboard(token):
     hired_block = _tbl(hired, True) if hired else ""
 
     legend_html = ""
-    if LEGACY_COMBINED:
-        legend_html = '<div style="display:flex;gap:20px;padding:10px 32px;background:#f0efe9;border-bottom:1px solid #ddd;font-size:12px;">' +             ''.join([f'<span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:{LEGACY_COLORS[loc]};display:inline-block"></span>{lab}</span>'
-                     for loc, lab in [('legacy_chattanooga','Chattanooga'),('legacy_ooltewah','Ooltewah'),('legacy_tuscaloosa','Tuscaloosa')]]) + '</div>'
+    if IS_COMBINED:
+        legend_html = '<div style="display:flex;gap:20px;padding:10px 32px;background:#0d1a10;border-bottom:1px solid rgba(200,168,75,0.2);font-size:12px;color:#94a3b8;">' +             ''.join([f'<span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:{COMBINED_COLORS[loc]};display:inline-block"></span>{COMBINED_LABELS[loc]}</span>'
+                     for loc in COMBINED_LOCS]) + '</div>'
 
     body = (
         (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed." + ("" if hide_contacts else " Click a name to view contact details.")) if badge else "") +
