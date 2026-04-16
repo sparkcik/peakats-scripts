@@ -25,8 +25,7 @@ jobs:
 
       - name: Deploy changed scripts
         run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/*.gs' 2>/dev/null \
-            || git show --name-only --format="" HEAD -- 'scripts/*.gs' | grep '^scripts/')
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/*.gs' 2>/dev/null             || git show --name-only --format="" HEAD -- 'scripts/*.gs' | grep '^scripts/')
           echo "Changed files: $CHANGED"
 
           deploy_script() {
@@ -48,6 +47,7 @@ jobs:
               scripts/fadv_drug_trigger.gs)  deploy_script $file "1QqRRUootcymqMoSR25_SpK2C4GKG9OKAvFw-G5MTOvFYJs3ReJErYdX_" ;;
               scripts/adobesign_router.gs)   deploy_script $file "1PtkUlu5cfBNsScizH10S1KMjHskvSKE8p8R_384TygRo7R2lzyUsSQg1" ;;
               scripts/gcic_adobe_trigger.gs) deploy_script $file "1WenEEz2AvsO-DOVl6jikApZpIfajFjgjdL2yNzZU1FikAegIsD2M_nGr" ;;
-              scripts/gcic_info_form.gs)     deploy_script $file "1YUVxlLZnoLfyUv5tFMoHYVF1GdyINBBD4XM3e1r0NII" ;;
+              scripts/gcic_info_form.gs)     deploy_script $file "1NZslArgLlWE5Zwd_nZfY7epzvBRaOlNsGZ9gmeG1i7aVOjQukq5_1_cI" ;;
+              scripts/mec_dl_form.gs)        deploy_script $file "1NZslArgLlWE5Zwd_nZfY7epzvBRaOlNsGZ9gmeG1i7aVOjQukq5_1_cI" ;;
             esac
           done
