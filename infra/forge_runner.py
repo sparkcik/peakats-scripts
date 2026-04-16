@@ -140,6 +140,11 @@ WHITELIST = {
         "description": "Backfill existing MEC/DL form responses into Supabase",
         "allowed_args": [],
     },
+    "fadv_profile_reminder": {
+        "script": str(SCRIPTS_DIR / "scripts" / "fadv_profile_reminder.py"),
+        "description": "FADV profile completion cadence -- T67/T68 daily escalation + Day 3 flag",
+        "allowed_args": ["--dry-run"],
+    },
     "mec_dl_reminder": {
         "script": str(SCRIPTS_DIR / "scripts" / "mec_dl_reminder.py"),
         "description": "MEC/DL reminder cadence -- 3-day escalating reminders (T16/17/18)",
@@ -759,6 +764,30 @@ def _mec_outreach_scheduler():
         _time.sleep(1)
 
 
+def _fadv_profile_reminder_scheduler():
+    """Daily FADV profile completion reminder -- T67/T68 escalation + Day 3 flag."""
+    import schedule as _schedule
+    import subprocess as _subprocess
+
+    def _run():
+        script = str(SCRIPTS_DIR / "scripts" / "fadv_profile_reminder.py")
+        try:
+            result = _subprocess.run(["python3", script], capture_output=True, text=True, timeout=120)
+            if result.stdout:
+                log.info(f"[fadv_profile_reminder] {result.stdout[-500:]}")
+            if result.returncode != 0:
+                log.warning(f"[fadv_profile_reminder] exit {result.returncode}: {result.stderr[-300:]}")
+        except Exception as e:
+            log.error(f"[fadv_profile_reminder] failed: {e}")
+
+    _schedule.every().day.at("08:30").do(_run)
+    log.info("[scheduler] fadv_profile_reminder started -- daily at 08:30 (backup to pg_cron)")
+    while True:
+        _schedule.run_pending()
+        import time
+        time.sleep(60)
+
+
 def _gcic_outreach_scheduler():
     """Backup GCIC outreach -- every 30 minutes."""
     import schedule as _schedule
@@ -1113,6 +1142,7 @@ if __name__ == "__main__":
     threading.Thread(target=_sms_scheduler, daemon=True).start()
     threading.Thread(target=_gcic_outreach_scheduler, daemon=True).start()
     threading.Thread(target=_mec_outreach_scheduler, daemon=True).start()
+    threading.Thread(target=_fadv_profile_reminder_scheduler, daemon=True).start()
     threading.Thread(target=_daily_scheduler, daemon=True).start()
 
     port = int(os.environ.get("PORT", 5678))
