@@ -168,14 +168,11 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
     sql = """
         SELECT id, first_name, last_name, client_id, phone, drug_test_status, background_status
         FROM candidates
-        WHERE (
-            (drug_test_status = 'Pass' AND background_status IN ('Eligible','In Progress','Consider','Needs Further Review'))
-            OR
-            (drug_test_status = 'In Progress' AND background_status IN ('In Progress','Consider','Eligible'))
-        )
+        WHERE drug_test_status IN ('In Progress','Pass','Negative/Pass','Fail','Expired','Collection Event Review')
         AND mec_dl_outreach_sent_at IS NULL
         AND (mec_dl_collection_stage IS NULL OR mec_dl_collection_stage NOT IN ('RECEIVED','SUBMITTED'))
         AND status NOT IN ('Rejected','Hired','Transferred')
+        AND compliance_override IS NOT TRUE
         AND phone IS NOT NULL AND phone != '0000000000'
     """
     if client_filter:
