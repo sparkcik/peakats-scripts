@@ -1068,12 +1068,14 @@ def _tr(c, am, cls="", hide_contacts=False):
         'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
         'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
         'rade_logistics': 'BRZ',
+        'deera_express': 'BRZ',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
     station_colors = {
         'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#c8a84b',
         'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
+        'deera_express': '#BA7517',
     }
     sc = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{sc};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
@@ -1128,9 +1130,9 @@ def client_dashboard(token):
             "labels": {"legacy_chattanooga": "Chattanooga", "legacy_ooltewah": "Ooltewah", "legacy_tuscaloosa": "Tuscaloosa"},
         },
         "rade_combined": {
-            "locs": ["gods_vision", "rade_logistics"],
-            "colors": {"gods_vision": "#BA7517", "rade_logistics": "#185FA5"},
-            "labels": {"gods_vision": "Austell", "rade_logistics": "Braselton"},
+            "locs": ["gods_vision", "deera_express"],
+            "colors": {"gods_vision": "#BA7517", "deera_express": "#185FA5"},
+            "labels": {"gods_vision": "Austell (Rade)", "deera_express": "Braselton (Deera)"},
         },
     }
     IS_COMBINED = client_id in COMBINED_CLIENTS
