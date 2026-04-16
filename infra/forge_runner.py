@@ -1342,12 +1342,12 @@ tr:hover td{{background:var(--tbl-hover)}}
 <div class="footer">Powered by <strong>PEAKrecruiting</strong> &bull; Questions? (470) 470-4766</div>
 <script>
 const TOKEN="{token}";
-const ACTION_URL="{ACTION_URL}";
+const ACTION_URL="{ACTION_URL}?token="+TOKEN;
 const RWP={json.dumps({k:v["label"] for k,v in RWP_META.items()})};
 const CDATA={cdata_js};
 function showCard(id){{const c=CDATA[id];if(!c)return;document.getElementById("cc-name").textContent=c.first_name+" "+c.last_name;document.getElementById("cc-phone").innerHTML=c.phone?'<a href="tel:'+c.phone+'">'+c.phone+"</a>":"--";document.getElementById("cc-email").innerHTML=c.email?'<a href="mailto:'+c.email+'">'+c.email+"</a>":"--";const r=RWP[c.rwp_classification];document.getElementById("cc-rwp").textContent=r?(r+(c.rwp_score?" "+c.rwp_score:"")):"--";document.getElementById("cc").classList.add("show");document.getElementById("ov").classList.add("show");}}
 function closeCard(){{document.getElementById("cc").classList.remove("show");document.getElementById("ov").classList.remove("show");}}
-async function post(cid,fields){{await fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{token:TOKEN,candidate_id:cid,...fields}})}});}}
+async function post(cid,fields){{return fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{candidate_id:cid,...fields}})}});}}
 function flash(id){{const el=document.getElementById("sv-"+id);if(el){{el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2000);}}}}
 function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const row=document.getElementById("row-"+id);const btn=row&&row.querySelector(".reroute-btn");if(btn)a==="rejected"?btn.classList.add("show"):btn.classList.remove("show","on");post(id,{{action:a,reroute_requested:false}}).then(()=>flash(id));}}
 function onReroute(id,btn){{const was=btn.classList.contains("on");btn.classList.toggle("on");const reason=!was?(prompt("Brief reason for re-route (optional):")||""):"";post(id,{{action:"rejected",reroute_requested:!was,reject_reason:reason}}).then(()=>flash(id));}}
