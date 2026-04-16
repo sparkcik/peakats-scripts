@@ -1077,8 +1077,8 @@ def _tr(c, am, cls="", hide_contacts=False):
         'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
         'deera_express': '#BA7517',
     }
-    sc = station_colors.get(cid_val, '#888')
-    station_pill = f'<span style="background:{sc};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
+    station_color = station_colors.get(cid_val, '#888')
+    station_pill = f'<span style="background:{station_color};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
     return f"""<tr class="{cls}" id="row-{cid}">
       <td>{"<button class='name-btn' onclick='showCard("+str(cid)+")'>"+c.get("first_name","")+" "+c.get("last_name","")+"</button>" if not hide_contacts else c.get("first_name","")+" "+c.get("last_name","")}</td>
       <td>{station_pill}</td>
