@@ -1095,7 +1095,7 @@ def _tr(c, am, cls="", hide_contacts=False):
         <option value="hired"{"selected" if a=="hired" else ""}>Hired</option>
         <option value="rejected"{"selected" if a=="rejected" else ""}>Rejected</option>
       </select>
-      <button class="reroute-btn {rshow} {ron}" onclick="onReroute({cid},this)">Re-route</button></td>
+      <div class="reject-reason {rshow}" id="rr-{cid}"><textarea class="notes-input" id="rr-txt-{cid}" placeholder="Required: reason for rejection..." style="min-height:48px;width:100%;margin-top:4px"></textarea><button class="reject-submit" onclick="submitReject({cid})">Submit rejection</button></div></td>
       <td><textarea class="notes-input" placeholder="Notes..." onblur="onNotes({cid},this)">{nt}</textarea>
       <span class="sv-flash" id="sv-{cid}">Saved</span></td>
     </tr>"""
@@ -1297,8 +1297,10 @@ tr:hover td{{background:var(--tbl-hover)}}
 .notes-input:focus{{outline:none;border-color:#c8a84b}}
 .sv-flash{{font-size:10px;color:var(--flash);margin-left:3px;opacity:0;transition:opacity 0.3s}}
 .sv-flash.show{{opacity:1}}
-.reroute-btn{{padding:3px 7px;border-radius:5px;border:1px solid #BA7517;background:#fff8f0;color:#BA7517;font-size:10px;cursor:pointer;margin-top:3px;display:none}}
-.reroute-btn.show{{display:inline-block}}.reroute-btn.on{{background:#BA7517;color:#fff}}
+.reject-reason{{display:none;margin-top:6px;width:100%}}
+.reject-reason.show{{display:block}}
+.reject-submit{{margin-top:4px;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid #A32D2D;background:#fef2f2;color:#A32D2D;cursor:pointer;font-family:inherit}}
+.reject-submit:hover{{background:#A32D2D;color:#fff}}
 .name-btn{{background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--name-color);text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#c8a84b;padding:0}}
 .name-btn:hover{{color:#0F6E56}}
 .overlay{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:999}}
@@ -1349,8 +1351,8 @@ function showCard(id){{const c=CDATA[id];if(!c)return;document.getElementById("c
 function closeCard(){{document.getElementById("cc").classList.remove("show");document.getElementById("ov").classList.remove("show");}}
 async function post(cid,fields){{return fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{candidate_id:cid,...fields}})}});}}
 function flash(id){{const el=document.getElementById("sv-"+id);if(el){{el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2000);}}}}
-function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const row=document.getElementById("row-"+id);const btn=row&&row.querySelector(".reroute-btn");if(btn)a==="rejected"?btn.classList.add("show"):btn.classList.remove("show","on");post(id,{{action:a,reroute_requested:false}}).then(()=>flash(id));}}
-function onReroute(id,btn){{const was=btn.classList.contains("on");btn.classList.toggle("on");const reason=!was?(prompt("Brief reason for re-route (optional):")||""):"";post(id,{{action:"rejected",reroute_requested:!was,reject_reason:reason}}).then(()=>flash(id));}}
+function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const rr=document.getElementById("rr-"+id);if(rr){{a==="rejected"?rr.classList.add("show"):rr.classList.remove("show");}}if(a!=="rejected"){{post(id,{{action:a}}).then(()=>flash(id));}}}}
+function submitReject(id){{const ta=document.getElementById("rr-txt-"+id);const reason=(ta&&ta.value.trim())||"";if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}post(id,{{action:"rejected",reject_reason:reason,notes:reason}}).then(()=>flash(id));}}
 function onNotes(id,ta){{const n=ta.value;post(id,{{notes:n}}).then(()=>flash(id));}}
 </script>
 </body>
