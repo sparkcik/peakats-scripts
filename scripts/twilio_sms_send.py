@@ -150,6 +150,6 @@ def run(dry_run, limit):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Twilio SMS sender")
     parser.add_argument("--dry-run", action="store_true", help="Preview without sending")
-    parser.add_argument("--limit", type=int, default=100, help="Max messages to process (default 100)")
+    parser.add_argument("--limit", type=int, default=500, help="Max messages to process (default 500)")
     args = parser.parse_args()
     run(args.dry_run, args.limit)

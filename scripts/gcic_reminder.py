@@ -258,7 +258,7 @@ def run_gcic_reminder():
                 'template_id': tpl_id,
                 'template_name': template_name,
                 'status': 'pending',
-                'channel': 'rc',
+                'channel': 'twilio',
                 'scheduled_for': scheduled_for,
                 'created_by': CREATED_BY
             })
