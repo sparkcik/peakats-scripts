@@ -291,7 +291,7 @@ def run_gcic_reminder():
                 from datetime import date
                 sb_insert('action_items', {
                     'task': f'GCIC ESCALATION -- {first} {last} ({client}) -- 3 reminders sent, no response. Manual follow-up required.',
-                    'priority': 'P0',
+                    'priority': '🔴',
                     'category': 'OPS',
                     'domain': 'PEAK Ops',
                     'status': 'PENDING',

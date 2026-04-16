@@ -19,7 +19,7 @@ SMS PLATFORM: RC only. Queues to sms_send_queue with migration_status=rc_active.
 
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
