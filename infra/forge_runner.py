@@ -697,49 +697,70 @@ def legal_tracker():
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;padding:24px 16px}
+:root{
+  --bg:#ffffff;--bg2:#f8f8f6;--bg3:#f0efe9;
+  --text:#1a1a1a;--text2:#555;--text3:#888;
+  --border:#e5e3da;--border2:#d0cec5;
+  --card:#ffffff;--card2:#f8f8f6;
+  --green-bg:#E1F5EE;--green:#0F6E56;--green-dark:#085041;
+  --amber-bg:#FAEEDA;--amber:#854F0B;--amber-dark:#633806;
+  --blue-bg:#E6F1FB;--blue:#185FA5;
+  --accent:#c8a84b;
+  --script-bg:#f0efe9;--script-border:#d0cec5;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0f1117;--bg2:#141c26;--bg3:#0d1520;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#475569;
+  --border:#1e2d3d;--border2:#2d3748;
+  --card:#141c26;--card2:#0f1117;
+  --green-bg:#0d1f16;--green:#34d399;--green-dark:#a7f3d0;
+  --amber-bg:#1a1500;--amber:#fbbf24;--amber-dark:#fde68a;
+  --blue-bg:#1e3a5f;--blue:#60a5fa;
+  --script-bg:#0d1f16;--script-border:rgba(200,168,75,0.3);
+}}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:24px 16px}
 .wrap{max-width:900px;margin:0 auto}
 h1{font-size:20px;font-weight:600;color:#fff;margin-bottom:4px}
-.sub{font-size:13px;color:#64748b;margin-bottom:20px}
-.script-box{background:#0d1f16;border:1px solid rgba(200,168,75,0.3);border-radius:10px;padding:16px 20px;margin-bottom:24px}
-.script-label{font-size:11px;font-weight:600;color:#c8a84b;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px}
-.script-text{font-size:14px;color:#e2e8f0;line-height:1.7;font-style:italic}
-.copy-btn{margin-top:10px;font-size:12px;padding:6px 14px;border-radius:6px;border:0.5px solid rgba(200,168,75,0.4);background:rgba(200,168,75,0.1);color:#c8a84b;cursor:pointer;font-family:inherit}
-.copy-btn:hover{background:rgba(200,168,75,0.2)}
+.sub{font-size:13px;color:var(--text2);margin-bottom:20px}
+.script-box{background:var(--script-bg);border:1px solid var(--script-border);border-radius:10px;padding:16px 20px;margin-bottom:24px}
+.script-label{font-size:11px;font-weight:600;color:var(--accent);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px}
+.script-text{font-size:14px;color:var(--text);line-height:1.7;font-style:italic}
+.copy-btn{margin-top:10px;font-size:12px;padding:6px 14px;border-radius:6px;border:0.5px solid var(--script-border);background:var(--bg3);color:var(--accent);cursor:pointer;font-family:inherit}
+.copy-btn:hover{opacity:0.85}
 .stats{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
-.stat{background:#141c26;border-radius:8px;padding:10px 16px;min-width:110px}
-.stat-n{font-size:22px;font-weight:600;color:#fff}
+.stat{background:var(--bg2);border-radius:8px;padding:10px 16px;min-width:110px}
+.stat-n{font-size:22px;font-weight:600;color:var(--text)}
 .stat-n.called{color:#34d399}
 .stat-n.msg{color:#fbbf24}
-.stat-l{font-size:11px;color:#64748b;margin-top:2px}
+.stat-l{font-size:11px;color:var(--text3);margin-top:2px}
 .filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
-.fb{font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid #2d3748;background:#141c26;color:#94a3b8;cursor:pointer;font-family:inherit}
-.fb.active{background:#1a2332;color:#e2e8f0;border-color:#4a5568}
-.card{background:#141c26;border:0.5px solid #1e2d3d;border-radius:10px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s}
-.card:hover{border-color:#2d3748}
-.card.st-called{border-left:3px solid #34d399}
-.card.st-left-msg{border-left:3px solid #fbbf24}
-.card.st-no-answer{border-left:3px solid #64748b}
-.card.st-appt-set{border-left:3px solid #60a5fa}
+.fb{font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit}
+.fb.active{background:var(--bg);color:var(--text);border-color:var(--border2)}
+.card{background:var(--card);border:0.5px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s}
+.card:hover{border-color:var(--border2)}
+.card.st-called{border-left:3px solid var(--green)}
+.card.st-left-msg{border-left:3px solid var(--amber)}
+.card.st-no-answer{border-left:3px solid var(--text3)}
+.card.st-appt-set{border-left:3px solid var(--blue)}
 .card-top{display:grid;grid-template-columns:36px 80px 1fr auto;gap:12px;align-items:start;padding:12px 14px}
 .pri{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;margin-top:2px}
-.pri.free{background:#0d1f16;color:#34d399;border:1px solid #0F6E56}
-.pri.paid{background:#1a1500;color:#fbbf24;border:1px solid #854F0B}
+.pri.free{background:var(--green-bg);color:var(--green);border:1px solid var(--green)}
+.pri.paid{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber)}
 .badge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:6px;display:inline-block;margin-top:3px}
-.badge.free{background:#0d1f16;color:#34d399;border:0.5px solid #0F6E56}
-.badge.paid{background:#1a1500;color:#fbbf24;border:0.5px solid #854F0B}
-.org-name{font-size:14px;font-weight:500;color:#e2e8f0;margin-bottom:3px}
-.org-meta{font-size:12px;color:#64748b;margin-bottom:2px}
-.org-what{font-size:12px;color:#94a3b8}
-.org-note{font-size:11px;color:#475569;font-style:italic;margin-top:2px}
+.badge.free{background:var(--green-bg);color:var(--green);border:0.5px solid var(--green)}
+.badge.paid{background:var(--amber-bg);color:var(--amber);border:0.5px solid var(--amber)}
+.org-name{font-size:14px;font-weight:500;color:var(--text);margin-bottom:3px}
+.org-meta{font-size:12px;color:var(--text2);margin-bottom:2px}
+.org-what{font-size:12px;color:var(--text2)}
+.org-note{font-size:11px;color:var(--text3);font-style:italic;margin-top:2px}
 .actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:130px}
-select{font-size:12px;padding:5px 8px;border-radius:6px;border:0.5px solid #2d3748;background:#1a2332;color:#cbd5e1;cursor:pointer;width:130px;font-family:inherit}
-.call-btn{font-size:12px;color:#60a5fa;background:#1e3a5f;padding:5px 10px;border-radius:6px;white-space:nowrap;border:none;cursor:pointer;width:130px;text-align:center;font-family:inherit}
-.call-btn:hover{background:#1e4a7f}
+select{font-size:12px;padding:5px 8px;border-radius:6px;border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);cursor:pointer;width:130px;font-family:inherit}
+.call-btn{font-size:12px;color:var(--blue);background:var(--blue-bg);padding:5px 10px;border-radius:6px;white-space:nowrap;border:none;cursor:pointer;width:130px;text-align:center;font-family:inherit}
+.call-btn:hover{opacity:0.85}
 .notes-wrap{padding:0 14px 12px}
-textarea{width:100%;font-size:13px;padding:8px 10px;border-radius:6px;border:0.5px solid #1e2d3d;background:#0f1117;color:#cbd5e1;resize:vertical;min-height:80px;font-family:'DM Sans',sans-serif;line-height:1.5}
+textarea{width:100%;font-size:13px;padding:8px 10px;border-radius:6px;border:0.5px solid var(--border);background:var(--bg2);color:var(--text);resize:vertical;min-height:80px;font-family:'DM Sans',sans-serif;line-height:1.5}
 textarea:focus{outline:none;border-color:#4a5568}
-textarea::placeholder{color:#334155}
+textarea::placeholder{color:var(--text3)}
 </style>
 </head>
 <body>
@@ -813,8 +834,8 @@ function render(){
   const appt=Object.values(state).filter(s=>s.status==='appt-set').length;
   document.getElementById('stats').innerHTML=
     `<div class="stat"><div class="stat-n called">${called}</div><div class="stat-l">Called</div></div>`+
-    `<div class="stat"><div class="stat-n msg">${leftMsg}</div><div class="stat-l">Left message</div></div>`+
-    `<div class="stat"><div class="stat-n" style="color:#60a5fa">${appt}</div><div class="stat-l">Appt set</div></div>`+
+    `<div class="stat"><div class="stat-n" style="color:var(--amber)">${leftMsg}</div><div class="stat-l">Left message</div></div>`+
+    `<div class="stat"><div class="stat-n" style="color:var(--blue)">${appt}</div><div class="stat-l">Appt set</div></div>`+
     `<div class="stat"><div class="stat-n">${noAnswer}</div><div class="stat-l">No answer</div></div>`;
 
   const rows=DATA.filter(r=>{
