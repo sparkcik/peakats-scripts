@@ -1060,7 +1060,7 @@ def _tr(c, am, cls="", hide_contacts=False):
     a = sv.get("action") or "none"
     nt = (sv.get("notes") or "").replace('"', "&quot;")
     sc = f" s-{a}" if a != "none" else ""
-    rshow = "show" if a == "rejected" else ""
+    rshow = "show" if a == "not_a_fit" else ""
     ron = "on" if sv.get("reroute_requested") else ""
     qc = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("qcert_completed_at") else '<span style="color:#e0e0e0">--</span>'
     rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
@@ -1093,7 +1093,7 @@ def _tr(c, am, cls="", hide_contacts=False):
         <option value="none"{"selected" if a=="none" else ""}>-- Select --</option>
         <option value="contacting"{"selected" if a=="contacting" else ""}>Contacting</option>
         <option value="hired"{"selected" if a=="hired" else ""}>Hired</option>
-        <option value="rejected"{"selected" if a=="rejected" else ""}>Rejected</option>
+        <option value="not_a_fit"{"selected" if a=="not_a_fit" else ""}>Not a fit</option>
       </select>
       <div class="reject-reason {rshow}" id="rr-{cid}"><textarea class="notes-input" id="rr-txt-{cid}" placeholder="Required: reason for rejection..." style="min-height:48px;width:100%;margin-top:4px"></textarea><button class="reject-submit" onclick="submitReject({cid})">Submit rejection</button></div></td>
       <td><textarea class="notes-input" placeholder="Notes..." onblur="onNotes({cid},this)">{nt}</textarea>
@@ -1292,7 +1292,7 @@ tr:hover td{{background:var(--tbl-hover)}}
 .hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid var(--sel-border);font-size:11px;font-family:'DM Sans',sans-serif;background:var(--sel-bg);color:var(--sel-text);cursor:pointer;width:118px}}
 .hire-sel.s-contacting{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
 .hire-sel.s-hired{{background:#e8faf2;border-color:#0F6E56;color:#0F6E56;font-weight:600}}
-.hire-sel.s-rejected{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
+.hire-sel.s-not_a_fit{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
 .notes-input{{width:150px;padding:4px 6px;border-radius:6px;border:1px solid var(--notes-border);font-size:11px;font-family:'DM Sans',sans-serif;resize:none;height:32px;background:var(--notes-bg);color:var(--notes-text)}}
 .notes-input:focus{{outline:none;border-color:#c8a84b}}
 .sv-flash{{font-size:10px;color:var(--flash);margin-left:3px;opacity:0;transition:opacity 0.3s}}
@@ -1351,8 +1351,8 @@ function showCard(id){{const c=CDATA[id];if(!c)return;document.getElementById("c
 function closeCard(){{document.getElementById("cc").classList.remove("show");document.getElementById("ov").classList.remove("show");}}
 async function post(cid,fields){{return fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{candidate_id:cid,...fields}})}});}}
 function flash(id){{const el=document.getElementById("sv-"+id);if(el){{el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2000);}}}}
-function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const rr=document.getElementById("rr-"+id);if(rr){{a==="rejected"?rr.classList.add("show"):rr.classList.remove("show");}}if(a!=="rejected"){{post(id,{{action:a}}).then(()=>flash(id));}}}}
-function submitReject(id){{const ta=document.getElementById("rr-txt-"+id);const reason=(ta&&ta.value.trim())||"";if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}post(id,{{action:"rejected",reject_reason:reason,notes:reason}}).then(()=>flash(id));}}
+function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const rr=document.getElementById("rr-"+id);if(rr){{a==="not_a_fit"?rr.classList.add("show"):rr.classList.remove("show");}}if(a!=="not_a_fit"){{post(id,{{action:a}}).then(()=>flash(id));}}}}
+function submitReject(id){{const ta=document.getElementById("rr-txt-"+id);const reason=(ta&&ta.value.trim())||"";if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(()=>flash(id));}}
 function onNotes(id,ta){{const n=ta.value;post(id,{{notes:n}}).then(()=>flash(id));}}
 </script>
 </body>
