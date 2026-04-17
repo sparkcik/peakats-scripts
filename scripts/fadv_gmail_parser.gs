@@ -47,6 +47,26 @@ function processFadvEmails() {
   }
   const processedLabel = getOrCreateLabel_(LABEL_PROCESSED);
   const failedLabel    = getOrCreateLabel_(LABEL_FAILED);
+
+  // ── SAFETY SWEEP: catch EntAdv emails that missed the Gmail filter ──────────
+  // EntAdv.DoNotReply@fadv.com sends terminal BG results. If the Gmail filter
+  // is missing or delayed, these land in inbox without FADV/Pending label.
+  // This sweep pulls them in before the main loop runs.
+  var senders = [
+    'from:EntAdv.DoNotReply@fadv.com',
+    'from:do_not_reply@fadv.com',
+    'from:Fedex.notifications@fadv.com',
+    'from:DoNotReply@noti.fadv.com'
+  ];
+  senders.forEach(function(senderQuery) {
+    var unlabeled = GmailApp.search(senderQuery + ' -label:FADV/Pending -label:FADV/Processed -label:FADV/Failed');
+    if (unlabeled.length > 0) {
+      Logger.log('Safety sweep: pulling ' + unlabeled.length + ' unlabeled thread(s) for ' + senderQuery + ' into FADV/Pending');
+      unlabeled.forEach(function(t) { t.addLabel(pendingLabel); });
+    }
+  });
+  // ── END SAFETY SWEEP ────────────────────────────────────────────────────────
+
   const threads = pendingLabel.getThreads(0, 100);
   Logger.log('Found ' + threads.length + ' threads to process');
 
