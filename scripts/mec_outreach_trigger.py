@@ -27,6 +27,12 @@ SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXV
 FROM_NUMBER = '+14704704766'
 CREATED_BY = 'mec_outreach_trigger'
 
+# Active clients only -- never send to deactivated ISPs
+WHITELIST = {
+    'cbm', 'cnf_services', 'gods_vision', 'deera_express',
+    'legacy_chattanooga', 'legacy_ooltewah', 'legacy_tuscaloosa',
+}
+
 # -- Template bodies ----------------------------------------------------------
 TEMPLATE_15_BODY = (
     "[FIRST], great news -- your background check has cleared. The last step is "
@@ -205,6 +211,34 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
         first = c.get('first_name', '')
         last = c.get('last_name', '')
         client = c.get('client_id', 'unknown')
+
+        # WHITELIST guard -- skip deactivated clients
+        if client not in WHITELIST:
+            print(f'  [{cid}] {first} {last} -- skipping, client {client} not in WHITELIST')
+            skipped += 1
+            continue
+
+        # Dedup guard -- skip if any MEC outreach sent in last 7 days
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        try:
+            recent = requests.get(
+                f'{SUPABASE_URL}/rest/v1/sms_send_queue',
+                headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+                params={
+                    'candidate_id': f'eq.{cid}',
+                    'template_name': 'in.(MEC/DL Outreach,MEC/DL Outreach T16,T16 MEC/DL Outreach)',
+                    'status': 'in.(sent,pending)',
+                    'created_at': f'gte.{cutoff}',
+                    'limit': '1',
+                    'select': 'id'
+                }
+            )
+            if recent.json():
+                print(f'  [{cid}] {first} {last} -- dedup skip, outreach sent within 7 days')
+                skipped += 1
+                continue
+        except Exception:
+            pass  # On dedup check failure, proceed
         drug = c.get('drug_test_status', '')
         bg = c.get('background_status', '')
         phone = format_phone(c.get('phone', ''))
@@ -239,6 +273,7 @@ def run_mec_outreach(dry_run=False, client_filter=None, limit=None):
                 'template_id': tpl_id,
                 'template_name': tpl_name,
                 'status': 'pending',
+                'channel': 'twilio',
                 'scheduled_for': enforce_blackout(now).isoformat() if hasattr(now, 'isoformat') else enforce_blackout(datetime.fromisoformat(now)).isoformat(),
                 'created_by': CREATED_BY
             })
