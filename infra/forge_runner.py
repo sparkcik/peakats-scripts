@@ -32,7 +32,7 @@ import time
 import schedule
 from datetime import datetime, timezone
 from pathlib import Path
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, make_response
 import requests as http_requests
 
 # -- Config -------------------------------------------------------------------
