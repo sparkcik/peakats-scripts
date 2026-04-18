@@ -680,6 +680,62 @@ def twilio_voice_recording():
     log.info(f"[twilio] Voicemail saved to twilio_voicemail from {from_number}")
     return Response(TWIML_RECORDING_ACK, mimetype="application/xml")
 
+
+@app.route("/voicemail/audio", methods=["GET", "OPTIONS"])
+def voicemail_audio_proxy():
+    if request.method == "OPTIONS":
+        resp = Response("", status=200)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "x-api-key, Content-Type"
+        return resp
+    url = request.args.get("url", "")
+    if not url or "api.twilio.com" not in url:
+        return Response('{"error": "invalid url"}', status=400, mimetype="application/json")
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = http_requests.get(url, auth=(account_sid, auth_token), stream=True, timeout=15)
+        if r.status_code != 200:
+            return Response('{"error": "twilio fetch failed", "status": ' + str(r.status_code) + '}', status=502, mimetype="application/json")
+        def generate():
+            for chunk in r.iter_content(chunk_size=8192):
+                yield chunk
+        resp = Response(generate(), status=200, mimetype="audio/mpeg")
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Accept-Ranges"] = "bytes"
+        return resp
+    except Exception as e:
+        return Response('{"error": "' + str(e) + '"}', status=500, mimetype="application/json")
+
+
+@app.route("/voicemail/audio", methods=["GET", "OPTIONS"])
+def voicemail_audio_proxy():
+    if request.method == "OPTIONS":
+        resp = Response("", status=200)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "x-api-key, Content-Type"
+        return resp
+    url = request.args.get("url", "")
+    if not url or "api.twilio.com" not in url:
+        return Response('{"error": "invalid url"}', status=400, mimetype="application/json")
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = http_requests.get(url, auth=(account_sid, auth_token), stream=True, timeout=15)
+        if r.status_code != 200:
+            return Response('{"error": "twilio fetch failed", "status": ' + str(r.status_code) + '}', status=502, mimetype="application/json")
+        def generate():
+            for chunk in r.iter_content(chunk_size=8192):
+                yield chunk
+        resp = Response(generate(), status=200, mimetype="audio/mpeg")
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Accept-Ranges"] = "bytes"
+        return resp
+    except Exception as e:
+        return Response('{"error": "' + str(e) + '"}', status=500, mimetype="application/json")
+
 @app.route("/twilio/voice/missed", methods=["POST"])
 def twilio_voice_missed():
     """Fires when the forward to Charles's cell times out -- play Kai voicemail."""
