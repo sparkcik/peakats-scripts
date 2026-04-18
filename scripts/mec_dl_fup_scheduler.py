@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://eyopvsmsvbgfuffscfom.supabase.co')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
-RC_FROM      = '4708574325'
+FROM_NUMBER  = '+14704704766'  # Twilio -- RC_FROM retired
 
 HEADERS = {
     'apikey': SUPABASE_KEY,
@@ -102,11 +102,12 @@ def queue_sms(candidate_id, phone, template_id, first_name):
         json={
             'candidate_id':     candidate_id,
             'to_number':        str(phone),
-            'from_number':      RC_FROM,
+            'from_number':      FROM_NUMBER,
             'body':             body,
             'template_id':      template_id,
             'template_name':    f'MEC FUP T{template_id}',
             'status':           'pending',
+            'channel':          'twilio',
             'scheduled_for':    enforce_blackout(now if hasattr(now, 'hour') else datetime.fromisoformat(now.replace('Z',''))).isoformat(),
             'created_by':       'mec_dl_fup_scheduler',
             'migration_status': 'rc_active'
