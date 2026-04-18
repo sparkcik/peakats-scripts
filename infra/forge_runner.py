@@ -1352,7 +1352,29 @@ function closeCard(){{document.getElementById("cc").classList.remove("show");doc
 async function post(cid,fields){{return fetch(ACTION_URL,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{candidate_id:cid,...fields}})}});}}
 function flash(id){{const el=document.getElementById("sv-"+id);if(el){{el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2000);}}}}
 function onAction(id,sel){{const a=sel.value;sel.className="hire-sel"+(a!=="none"?" s-"+a:"");const rr=document.getElementById("rr-"+id);if(rr){{a==="not_a_fit"?rr.classList.add("show"):rr.classList.remove("show");}}if(a!=="not_a_fit"){{post(id,{{action:a}}).then(()=>flash(id));}}}}
-function submitReject(id){{const ta=document.getElementById("rr-txt-"+id);const reason=(ta&&ta.value.trim())||"";if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(()=>flash(id));}}
+function submitReject(id){{
+  const ta=document.getElementById("rr-txt-"+id);
+  const reason=(ta&&ta.value.trim())||"";
+  if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}
+  post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(function(resp){{
+    // Fade and remove the row -- candidate back in pool, PEAK notified
+    const row=document.getElementById("row-"+id);
+    if(row){{
+      row.style.transition="opacity 0.4s";
+      row.style.opacity="0";
+      setTimeout(function(){{
+        row.remove();
+        // If section is now empty, show a placeholder
+        var tbody=document.querySelector("tbody");
+        if(tbody&&tbody.querySelectorAll("tr").length===0){{
+          var tr=document.createElement("tr");
+          tr.innerHTML="<td colspan='99' style='text-align:center;padding:16px;color:var(--text2);font-size:13px;font-style:italic'>No candidates in this section</td>";
+          tbody.appendChild(tr);
+        }}
+      }},400);
+    }}
+  }});
+}}
 function onNotes(id,ta){{const n=ta.value;post(id,{{notes:n}}).then(()=>flash(id));}}
 </script>
 </body>
