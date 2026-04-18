@@ -1070,7 +1070,7 @@ def _tr(c, am, cls="", hide_contacts=False):
         'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
         'rade_logistics': 'BRZ',
         'deera_express': 'BRZ',
-        'a_to_z_route_services': 'ATZ',
+        'a_to_z_route_services': 'MAR',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
