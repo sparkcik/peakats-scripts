@@ -419,31 +419,6 @@ TWIML_GREETING = """<?xml version="1.0" encoding="UTF-8"?>
 TWIML_RECORDING_ACK = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>'
 
 
-
-
-@app.route("/voicemail/audio", methods=["GET", "OPTIONS"])
-def voicemail_audio_proxy():
-    if request.method == "OPTIONS":
-        r = make_response("", 200)
-        r.headers["Access-Control-Allow-Origin"] = "*"
-        return r
-    url = request.args.get("url", "")
-    if not url or "api.twilio.com" not in url:
-        return jsonify({"error": "invalid url"}), 400
-    sid   = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    try:
-        resp = http_requests.get(url, auth=(sid, token), timeout=15)
-        if resp.status_code != 200:
-            return jsonify({"error": "twilio fetch failed", "status": resp.status_code}), 502
-        r = make_response(resp.content, 200)
-        r.headers["Content-Type"] = "audio/mpeg"
-        r.headers["Access-Control-Allow-Origin"] = "*"
-        r.headers["Cache-Control"] = "no-cache"
-        return r
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 @app.route("/twilio/call", methods=["POST", "OPTIONS"])
 def twilio_outbound_call():
     if request.method == "OPTIONS":
@@ -1382,6 +1357,9 @@ function submitReject(id){{
   const ta=document.getElementById("rr-txt-"+id);
   const reason=(ta&&ta.value.trim())||"";
   if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}
+  // Disable button immediately to prevent double-fire on rapid taps
+  const btn=ta&&ta.parentNode&&ta.parentNode.querySelector(".reject-submit");
+  if(btn){{btn.disabled=true;btn.textContent="Submitting...";}}
   post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(function(){{
     const row=document.getElementById("row-"+id);
     if(!row)return;
