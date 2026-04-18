@@ -1412,23 +1412,40 @@ function submitReject(id){{
   const ta=document.getElementById("rr-txt-"+id);
   const reason=(ta&&ta.value.trim())||"";
   if(!reason){{ta&&(ta.style.border="1px solid #A32D2D");return;}}
-  post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(function(resp){{
-    // Fade and remove the row -- candidate back in pool, PEAK notified
+  post(id,{{action:"not_a_fit",reject_reason:reason,notes:reason}}).then(function(){{
     const row=document.getElementById("row-"+id);
-    if(row){{
-      row.style.transition="opacity 0.4s";
-      row.style.opacity="0";
-      setTimeout(function(){{
-        row.remove();
-        // If section is now empty, show a placeholder
-        var tbody=document.querySelector("tbody");
-        if(tbody&&tbody.querySelectorAll("tr").length===0){{
-          var tr=document.createElement("tr");
-          tr.innerHTML="<td colspan='99' style='text-align:center;padding:16px;color:var(--text2);font-size:13px;font-style:italic'>No candidates in this section</td>";
-          tbody.appendChild(tr);
-        }}
-      }},400);
-    }}
+    if(!row)return;
+    // Get candidate name from the row
+    const nameCell=row.querySelector("td:first-child");
+    const name=nameCell?nameCell.innerText.trim():"Candidate";
+    const ts=new Date().toLocaleTimeString([],{{hour:"2-digit",minute:"2-digit"}});
+    // Fade out the row from its current section
+    row.style.transition="opacity 0.35s";
+    row.style.opacity="0";
+    setTimeout(function(){{
+      row.remove();
+      // Ensure Not a Fit section exists at bottom of page
+      var naf=document.getElementById("naf-section");
+      if(!naf){{
+        naf=document.createElement("div");
+        naf.id="naf-section";
+        naf.style.cssText="margin-top:32px;border-top:1px solid var(--tbl-border);padding-top:20px";
+        naf.innerHTML="<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
+          +"<span style='width:10px;height:10px;border-radius:50%;background:#A32D2D;display:inline-block'></span>"
+          +"<span style='font-size:15px;font-weight:500;color:var(--text)'>Not a Fit</span></div>"
+          +"<p style='font-size:13px;color:var(--text2);margin-bottom:12px'>Flagged by your team -- returned to PEAK for review and redeployment.</p>"
+          +"<div id='naf-list'></div>";
+        document.querySelector(".body")&&document.querySelector(".body").appendChild(naf);
+      }}
+      // Append a compact record card to the Not a Fit list
+      var list=document.getElementById("naf-list");
+      var card=document.createElement("div");
+      card.style.cssText="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--tbl-row);border:0.5px solid var(--tbl-border);border-left:3px solid #A32D2D;border-radius:6px;margin-bottom:8px;font-size:13px";
+      card.innerHTML="<span style='font-weight:500;color:var(--text)'>"+name+"</span>"
+        +"<span style='color:var(--text2);font-size:12px'>Not a fit &bull; "+ts+"</span>"
+        +"<span style='font-size:11px;color:#A32D2D;font-style:italic;max-width:200px;text-align:right'>"+reason+"</span>";
+      list&&list.appendChild(card);
+    }},350);
   }});
 }}
 function onNotes(id,ta){{const n=ta.value;post(id,{{notes:n}}).then(()=>flash(id));}}
