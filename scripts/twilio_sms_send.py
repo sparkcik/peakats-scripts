@@ -146,6 +146,31 @@ def run(dry_run, limit):
     log.info(f"Done. Sent: {sent}, Failed: {failed}")
     print(f"Sent: {sent} | Failed: {failed}")
 
+    # Write heartbeat to forge_memory so monitor can detect stale poller
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        hb = requests.post(
+            f"{SUPABASE_URL}/rest/v1/forge_memory",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            json={
+                "category": "heartbeat",
+                "subject": "poller_heartbeat",
+                "content": f"sent={sent} failed={failed} total={sent+failed}",
+                "session_date": now_iso[:10],
+                "target_thread": "PEAK Infra",
+            },
+            timeout=5,
+        )
+        if hb.status_code not in (200, 201, 204):
+            log.warning(f"Heartbeat write failed: {hb.status_code}")
+    except Exception as hb_err:
+        log.warning(f"Heartbeat write exception: {hb_err}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Twilio SMS sender")
