@@ -252,7 +252,6 @@ def run_drug_screen_reminder():
                 'template_id': tpl_id,
                 'template_name': template_name,
                 'status': 'pending',
-                'channel': 'twilio',
                 'scheduled_for': scheduled_for,
                 'created_by': CREATED_BY
             })
