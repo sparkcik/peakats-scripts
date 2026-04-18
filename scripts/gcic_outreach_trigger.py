@@ -222,6 +222,7 @@ def run_gcic_outreach():
                 'template_id': tpl_id,
                 'template_name': tpl_name,
                 'status': 'pending',
+                'channel': 'twilio',
                 'migration_status': 'twilio_active',
                 'scheduled_for': scheduled_for,
                 'created_by': CREATED_BY
