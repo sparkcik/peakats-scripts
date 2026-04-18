@@ -145,7 +145,10 @@ function processMessage_(message) {
   if (scoreMatch) {
     emailType    = 'background';
     rawValue     = scoreMatch[1].trim();
-    mappedStatus = BG_STATUS_MAP[rawValue] || rawValue;
+    // Normalize NFR variants -- FADV sends both 'D-Needs further review' and 'D-Needs Further Review'
+    var normalizedRaw = rawValue.replace(/needs further review/i, 'Needs Further Review')
+                                .replace(/^D-/i, 'D-');
+    mappedStatus = BG_STATUS_MAP[normalizedRaw] || BG_STATUS_MAP[rawValue] || rawValue;
   } else if (resultMatch) {
     emailType    = 'drug';
     rawValue     = resultMatch[1].trim();
@@ -751,11 +754,18 @@ function processFadvProfileCompletions() {
     var fullName = (candidate.first_name || '') + ' ' + (candidate.last_name || '');
 
     // Build patch payload
+    // Idempotency guard: only advance to In Progress if not already past this stage
+    var BG_ADVANCE_ALLOWED = ['Not Started', 'Intake', null, undefined, ''];
+    if (candidate.background_status && BG_ADVANCE_ALLOWED.indexOf(candidate.background_status) === -1) {
+      Logger.log('[FadvProfile] Skipping background_status write -- already at ' + candidate.background_status + ' for ' + fullName);
+    }
     var patch = {
-      background_status:        'In Progress',
       fadv_profile_completed_at: emailDate,
       updated_at:               new Date().toISOString()
     };
+    if (BG_ADVANCE_ALLOWED.indexOf(candidate.background_status) !== -1) {
+      patch.background_status = 'In Progress';
+    }
 
     // If fadv_submitted_at is NULL, AO submitted directly -- stamp from email date
     if (!candidate.fadv_submitted_at) {
@@ -847,8 +857,9 @@ function processSAPCancellations() {
 
     // Set Ineligible + Rejected
     var code = supabasePatch_('candidates', 'id=eq.' + candidate.id, {
-      background_status: 'Ineligible',
+      background_status: 'Case Canceled',
       status:            'Rejected',
+      rejection_source:  'compliance',
       reject_reason:     'SAP_disqualification',
       updated_at:        new Date().toISOString()
     });
@@ -944,6 +955,7 @@ function processFormFoxOrders() {
     // Stamp drug_screen_ordered_at from email date
     var patch = {
       drug_screen_ordered_at: emailDate,
+      drug_test_status:       'In Progress',
       updated_at:             new Date().toISOString()
     };
     if (orderNumber) patch.drug_test_id = orderNumber;
