@@ -86,9 +86,9 @@ WHITELIST = {
         "allowed_args": ["--client", "--test", "--list"],
     },
     "sms_queue": {
-        "script": str(SCRIPTS_DIR / "sms_queue_poller.py"),
+        "script": str(SCRIPTS_DIR / "twilio_sms_send.py"),
         "description": "SMS queue poller -- send pending scheduled messages via Twilio",
-        "allowed_args": ["--dry-run"],
+        "allowed_args": ["--dry-run", "--limit"],
     },
     "shell": {
         "script": "__shell__",
@@ -1266,7 +1266,7 @@ def client_dashboard(token):
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PATS | {label}</title>
+<title>PEAK Pipeline</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
