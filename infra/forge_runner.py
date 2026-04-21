@@ -1196,7 +1196,6 @@ def client_dashboard(token):
 
     total = len(badge) + len(prog) + len(rev)
     now = datetime.now().strftime("%B %-d, %Y")
-    clean_label = label.replace('PEAKATS | ', '').replace(' Inc.', '').replace(' Inc', '').split(' — ')[0].strip()
 
     cdata_js = json.dumps({str(k): {
         "first_name": v.get("first_name",""),
@@ -1305,8 +1304,7 @@ body{{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);mi
 .hdr p{{color:#c8a84b;font-size:13px;margin-top:3px}}
 .hdr-r{{text-align:right}}
 .hdr-r .hr-count{{color:#c8a84b;font-size:22px;font-weight:700;display:block;line-height:1.2;margin-bottom:4px}}
-.hdr-r .hr-date{{color:#8aab96;font-size:12px;display:block;margin-bottom:2px}}
-.hdr-r .hr-brand{{color:#5a7a66;font-size:12px;display:block}}
+.hdr-r .hr-date{{color:#8aab96;font-size:12px;display:block}}
 .stats{{background:var(--hdr);border-bottom:1px solid var(--hdr-border);padding:0 32px 20px;display:flex;gap:14px;flex-wrap:wrap}}
 .stat{{background:var(--stat-bg);border:0.5px solid rgba(200,168,75,0.25);border-radius:8px;padding:12px 20px}}
 .sv{{font-size:26px;font-weight:600;color:#fff}}
@@ -1367,8 +1365,8 @@ tr:hover td{{background:var(--tbl-hover)}}
   <div class="cc-row"><span class="cc-lbl">Profile</span><span class="cc-val" id="cc-rwp"></span></div>
 </div>
 <div class="hdr">
-  <div><h1>{clean_label}</h1></div>
-  <div class="hdr-r"><span class="hr-count">{total} active candidates</span><span class="hr-date">Updated {now} &middot; v1.4</span><span class="hr-brand">Powered by PEAKrecruiting</span></div>
+  <div><h1>Candidate Pipeline</h1><p>{label}</p></div>
+  <div class="hdr-r"><span class="hr-count">{total} active candidates</span><span class="hr-date">Updated {now}</span></div>
 </div>
 <div class="stats">
   <div class="stat"><div class="sv" style="color:#c8a84b">{len(badge)}</div><div class="sl">Badge Ready</div></div>
@@ -1378,7 +1376,7 @@ tr:hover td{{background:var(--tbl-hover)}}
   <div class="stat"><div class="sv" style="color:#aaa">{pre_count}</div><div class="sl">Pre-Submission</div></div>
 </div>
 {legend_html}<div class="body">{body}</div>
-<div class="footer">Powered by <strong>PEAKrecruiting</strong> &bull; Questions? (470) 470-4766</div>
+<div class="footer">Powered by PEAKrecruiting &nbsp;&middot;&nbsp; Kai &nbsp;&middot;&nbsp; 470-470-4766</div>
 <script>
 const TOKEN="{token}";
 const ACTION_URL="{ACTION_URL}?token="+TOKEN;
