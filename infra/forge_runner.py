@@ -1067,18 +1067,19 @@ def _tr(c, am, cls="", hide_contacts=False):
     rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
     station_map = {
         'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
-        'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
-        'rade_logistics': 'BRZ',
+        'cbm': 'NOR', 'cnf_services': 'NRC', 'safoa': 'NRC',
+        'gods_vision': 'AUS', 'excellus': 'AUS', 'rade_logistics': 'AUS',
         'deera_express': 'BRZ',
-        'a_to_z_route_services': 'MAR',
+        'a_to_z_route_services': 'KSW',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
     station_colors = {
         'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#c8a84b',
-        'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
-        'deera_express': '#BA7517',
-        'a_to_z_route_services': '#1a3a2a',
+        'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'safoa': '#1a3a2a',
+        'gods_vision': '#BA7517', 'excellus': '#BA7517', 'rade_logistics': '#BA7517',
+        'deera_express': '#8B4513',
+        'a_to_z_route_services': '#185FA5',
     }
     station_color = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{station_color};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
