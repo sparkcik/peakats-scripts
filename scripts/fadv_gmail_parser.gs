@@ -319,7 +319,7 @@ function findCandidate_(cid, name, emailType, fadvAccountId) {
 function updateCandidate_(candidateId, emailType, mappedStatus, cid) {
   const field    = emailType === 'background' ? 'background_status' : 'drug_test_status';
   const cidField = emailType === 'background' ? 'background_id'     : 'drug_test_id';
-  const PROFILE_COMPLETE_BG = ['Eligible', 'Needs Further Review', 'Ineligible', 'Case Canceled'];
+  const PROFILE_COMPLETE_BG = ['Eligible', 'Needs Further Review', 'Ineligible', 'Case Canceled', 'In Progress'];
   const payload = {
     [field]: mappedStatus,
     fadv_last_updated: new Date().toISOString()
