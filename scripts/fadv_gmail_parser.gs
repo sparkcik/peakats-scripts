@@ -319,10 +319,18 @@ function findCandidate_(cid, name, emailType, fadvAccountId) {
 function updateCandidate_(candidateId, emailType, mappedStatus, cid) {
   const field    = emailType === 'background' ? 'background_status' : 'drug_test_status';
   const cidField = emailType === 'background' ? 'background_id'     : 'drug_test_id';
+  const PROFILE_COMPLETE_BG = ['Eligible', 'Needs Further Review', 'Ineligible', 'Case Canceled'];
   const payload = {
     [field]: mappedStatus,
     fadv_last_updated: new Date().toISOString()
   };
+  // Stamp profile_status=Completed whenever BG or drug reaches a terminal state
+  if (emailType === 'background' && PROFILE_COMPLETE_BG.includes(mappedStatus)) {
+    payload.profile_status = 'Completed';
+  }
+  if (emailType === 'drug' && (mappedStatus === 'Pass' || mappedStatus === 'Fail' || mappedStatus === 'Negative/Pass')) {
+    payload.profile_status = 'Completed';
+  }
   // Stamp CID if provided and not already set -- never overwrite existing order ID
   if (cid) {
     const current = supabaseGet_('candidates', { select: cidField, 'id': 'eq.' + candidateId, limit: 1 });
@@ -543,6 +551,7 @@ function processFadvActionEmails() {
 
         var patchCode = supabasePatch_('candidates', 'id=eq.' + candidate.id, {
           background_status:    'Needs Further Review',
+          profile_status:       'Completed',
           fadv_action_required: true,
           fadv_action_reason:   reason,
           fadv_action_link:     profileLink,
@@ -876,6 +885,7 @@ function processSAPCancellations() {
     // Set Ineligible + Rejected
     var code = supabasePatch_('candidates', 'id=eq.' + candidate.id, {
       background_status: 'Case Canceled',
+      profile_status:    'Completed',
       status:            'Rejected',
       rejection_source:  'compliance',
       reject_reason:     'SAP_disqualification',
