@@ -86,7 +86,7 @@ WHITELIST = {
         "allowed_args": ["--client", "--test", "--list"],
     },
     "sms_queue": {
-        "script": str(SCRIPTS_DIR / "twilio_sms_send.py"),
+        "script": str(SCRIPTS_DIR / "scripts" / "twilio_sms_send.py"),
         "description": "SMS queue poller -- send pending scheduled messages via Twilio",
         "allowed_args": ["--dry-run", "--limit"],
     },
