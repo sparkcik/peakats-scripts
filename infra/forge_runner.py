@@ -1067,19 +1067,18 @@ def _tr(c, am, cls="", hide_contacts=False):
     rd = '<span style="color:#0F6E56;font-weight:600">Done</span>' if c.get("road_test_date") else '<span style="color:#e0e0e0">--</span>'
     station_map = {
         'legacy_chattanooga': 'CHA', 'legacy_ooltewah': 'OOL', 'legacy_tuscaloosa': 'TUS',
-        'cbm': 'NOR', 'cnf_services': 'NRC', 'safoa': 'NRC',
-        'gods_vision': 'AUS', 'excellus': 'AUS', 'rade_logistics': 'AUS',
+        'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
+        'rade_logistics': 'BRZ',
         'deera_express': 'BRZ',
-        'a_to_z_route_services': 'KSW',
+        'a_to_z_route_services': 'MAR',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
     station_colors = {
         'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#c8a84b',
-        'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'safoa': '#1a3a2a',
-        'gods_vision': '#BA7517', 'excellus': '#BA7517', 'rade_logistics': '#BA7517',
-        'deera_express': '#8B4513',
-        'a_to_z_route_services': '#185FA5',
+        'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
+        'deera_express': '#BA7517',
+        'a_to_z_route_services': '#1a3a2a',
     }
     station_color = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{station_color};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
@@ -1197,6 +1196,7 @@ def client_dashboard(token):
 
     total = len(badge) + len(prog) + len(rev)
     now = datetime.now().strftime("%B %-d, %Y")
+    clean_label = label.replace('PEAKATS | ', '').replace(' Inc.', '').replace(' Inc', '').split(' — ')[0].strip()
 
     cdata_js = json.dumps({str(k): {
         "first_name": v.get("first_name",""),
@@ -1303,8 +1303,10 @@ body{{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);mi
 .hdr{{background:var(--hdr);border-bottom:1px solid var(--hdr-border);padding:22px 32px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}}
 .hdr h1{{font-family:'DM Sans',sans-serif;font-weight:600;color:#fff;font-size:22px;letter-spacing:-0.3px}}
 .hdr p{{color:#c8a84b;font-size:13px;margin-top:3px}}
-.hdr-r{{text-align:right;color:#8aab96;font-size:12px}}
-.hdr-r strong{{color:#c8a84b;font-size:15px;display:block;margin-bottom:3px}}
+.hdr-r{{text-align:right}}
+.hdr-r .hr-count{{color:#c8a84b;font-size:22px;font-weight:700;display:block;line-height:1.2;margin-bottom:4px}}
+.hdr-r .hr-date{{color:#8aab96;font-size:12px;display:block;margin-bottom:2px}}
+.hdr-r .hr-brand{{color:#5a7a66;font-size:12px;display:block}}
 .stats{{background:var(--hdr);border-bottom:1px solid var(--hdr-border);padding:0 32px 20px;display:flex;gap:14px;flex-wrap:wrap}}
 .stat{{background:var(--stat-bg);border:0.5px solid rgba(200,168,75,0.25);border-radius:8px;padding:12px 20px}}
 .sv{{font-size:26px;font-weight:600;color:#fff}}
@@ -1365,8 +1367,8 @@ tr:hover td{{background:var(--tbl-hover)}}
   <div class="cc-row"><span class="cc-lbl">Profile</span><span class="cc-val" id="cc-rwp"></span></div>
 </div>
 <div class="hdr">
-  <div><h1>Candidate Pipeline</h1><p>{label}</p></div>
-  <div class="hdr-r"><strong>{total} active candidates</strong>Updated {now} &bull; v1.4</div>
+  <div><h1>{clean_label}</h1></div>
+  <div class="hdr-r"><span class="hr-count">{total} active candidates</span><span class="hr-date">Updated {now} &middot; v1.4</span><span class="hr-brand">Powered by PEAKrecruiting</span></div>
 </div>
 <div class="stats">
   <div class="stat"><div class="sv" style="color:#c8a84b">{len(badge)}</div><div class="sl">Badge Ready</div></div>
