@@ -49,22 +49,40 @@ function processFadvEmails() {
   const failedLabel    = getOrCreateLabel_(LABEL_FAILED);
 
   // ── SAFETY SWEEP: catch EntAdv emails that missed the Gmail filter ──────────
-  // EntAdv.DoNotReply@fadv.com sends terminal BG results. If the Gmail filter
-  // is missing or delayed, these land in inbox without FADV/Pending label.
-  // This sweep pulls them in before the main loop runs.
-  var senders = [
+  // Fix (Apr 21): addLabel + getThreads in the same run has cache inconsistency.
+  // Solution: process swept threads immediately in-line, don't wait for getThreads().
+  var sweepSenders = [
     'from:EntAdv.DoNotReply@fadv.com',
     'from:do_not_reply@fadv.com',
     'from:Fedex.notifications@fadv.com',
     'from:DoNotReply@noti.fadv.com'
   ];
-  senders.forEach(function(senderQuery) {
-    var unlabeled = GmailApp.search(senderQuery + ' -label:FADV/Pending -label:FADV/Processed -label:FADV/Failed');
+  var sweepUpdated = 0, sweepErrors = 0;
+  sweepSenders.forEach(function(senderQuery) {
+    var unlabeled = GmailApp.search(senderQuery + ' -label:FADV/Pending -label:FADV/Processed -label:FADV/Failed', 0, 50);
     if (unlabeled.length > 0) {
-      Logger.log('Safety sweep: pulling ' + unlabeled.length + ' unlabeled thread(s) for ' + senderQuery + ' into FADV/Pending');
-      unlabeled.forEach(function(t) { t.addLabel(pendingLabel); });
+      Logger.log('[Safety sweep] Found ' + unlabeled.length + ' unlabeled thread(s) for ' + senderQuery);
+      unlabeled.forEach(function(thread) {
+        thread.addLabel(pendingLabel);
+        // Process immediately -- do not wait for getThreads() which may miss newly-labeled threads
+        thread.getMessages().forEach(function(msg) {
+          try {
+            var result = processMessage_(msg);
+            if (result === 'updated') sweepUpdated++;
+          } catch(e) {
+            sweepErrors++;
+            Logger.log('[Safety sweep] Error processing message: ' + e.message);
+          }
+        });
+        // Mark as processed after in-line processing
+        thread.addLabel(processedLabel);
+        thread.removeLabel(pendingLabel);
+      });
     }
   });
+  if (sweepUpdated > 0 || sweepErrors > 0) {
+    Logger.log('[Safety sweep] Complete: updated=' + sweepUpdated + ' errors=' + sweepErrors);
+  }
   // ── END SAFETY SWEEP ────────────────────────────────────────────────────────
 
   const threads = pendingLabel.getThreads(0, 100);
