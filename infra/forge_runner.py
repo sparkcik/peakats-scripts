@@ -1174,13 +1174,16 @@ def client_dashboard(token):
         for a in acts:
             am[a["candidate_id"]] = a
 
-    badge, prog, rev, hired = [], [], [], []
+    badge, prog, rev, hired, naf = [], [], [], [], []
     cdata = {}
     for c in cands:
         cdata[c["id"]] = c
         bg = (c.get("background_status") or "").lower()
         dr = (c.get("drug_test_status") or "").lower()
         ca = am.get(c["id"], {}).get("action")
+        if ca == "not_a_fit":
+            naf.append(c)
+            continue
         if ca == "hired":
             hired.append(_tr(c, am, "badge-bg", hide_contacts))
             continue
@@ -1218,13 +1221,41 @@ def client_dashboard(token):
         legend_html = '<div style="display:flex;gap:20px;padding:10px 32px;background:#0d1a10;border-bottom:1px solid rgba(200,168,75,0.2);font-size:12px;color:#94a3b8;">' +             ''.join([f'<span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:{COMBINED_COLORS[loc]};display:inline-block"></span>{COMBINED_LABELS[loc]}</span>'
                      for loc in COMBINED_LOCS]) + '</div>'
 
+    def _naf_row(c):
+        name = (c.get("first_name","") + " " + c.get("last_name","")).strip()
+        action_data = am.get(c["id"], {})
+        reason = (action_data.get("reject_reason") or action_data.get("notes") or "No reason provided")
+        return (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:10px 14px;background:var(--tbl-row);border:0.5px solid var(--tbl-border);'
+            f'border-left:3px solid #A32D2D;border-radius:6px;margin-bottom:8px;font-size:13px">'
+            f'<span style="font-weight:500;color:var(--text)">{name}</span>'
+            f'<span style="color:var(--text2);font-size:12px">Not a fit</span>'
+            f'<span style="font-size:11px;color:#A32D2D;font-style:italic;max-width:200px;text-align:right">{reason}</span>'
+            f'</div>'
+        )
+
+    naf_block = ""
+    if naf:
+        naf_rows = "".join(_naf_row(c) for c in naf)
+        naf_block = (
+            '<div id="naf-section" style="margin-top:32px;border-top:1px solid var(--tbl-border);padding-top:20px">'
+            '<div style=\'display:flex;align-items:center;gap:10px;margin-bottom:10px\'>'
+            '<span style=\'width:10px;height:10px;border-radius:50%;background:#A32D2D;display:inline-block\'></span>'
+            '<span style=\'font-size:15px;font-weight:500;color:var(--text)\'>Not a Fit</span></div>'
+            '<p style=\'font-size:13px;color:var(--text2);margin-bottom:12px\'>Flagged by your team &mdash; returned to PEAK for review and redeployment.</p>'
+            f'{naf_rows}'
+            '</div>'
+        )
+
     body = (
         (_sec("Badge Ready", "#0F6E56", _tbl(badge, True), "Background cleared, drug test passed." + ("" if hide_contacts else " Click a name to view contact details.")) if badge else "") +
         (_sec("In Progress", "#185FA5", _tbl(prog, True), "Background screening or drug test currently underway.") if prog else "") +
         (_sec("Under Review", "#BA7517", rev_block) if rev else "") +
         (_sec("Pre-Submission", "#aaa", pre_block) if pre_count else "") +
         (_sec("Hired", "#0F6E56", hired_block, "Candidates marked as hired. Shown for record-keeping.") if hired else "") +
-        ('<p style="color:#aaa;text-align:center;padding:60px">No active candidates at this time.</p>' if not total and not hired else "")
+        ('<p style="color:#aaa;text-align:center;padding:60px">No active candidates at this time.</p>' if not total and not hired and not naf else "") +
+        naf_block
     )
 
     SUPA_URL = SUPABASE_URL
