@@ -1167,6 +1167,22 @@ def client_dashboard(token):
     )
     pre_count = len(pre) if isinstance(pre, list) else 0
 
+    # RWP 11 (FEDEX_ACTIVE) candidates -- Badge Ready regardless of BG/drug
+    # These may have bg=Not Started so they get excluded from the main query above
+    rwp11 = _supa_get(
+        f"candidates?{cid_filter}"
+        "&status=not.in.(Rejected,Hired,Transferred,Expired)"
+        "&rwp_score=eq.11"
+        "&background_status=not.in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
+        "&or=(compliance_override.is.null,compliance_override.eq.false)"
+        "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
+        "background_status,drug_test_status,gcic_uploaded,mec_uploaded,dl_verified,"
+        "qcert_completed_at,road_test_date,client_id"
+    )
+    if isinstance(rwp11, list):
+        existing_ids = {c["id"] for c in cands}
+        cands = cands + [c for c in rwp11 if c["id"] not in existing_ids]
+
     # Client actions
     acts = _supa_get(f"client_actions?token=eq.{token}&select=candidate_id,action,notes,reroute_requested")
     am = {}
@@ -1187,8 +1203,18 @@ def client_dashboard(token):
         if ca == "hired":
             hired.append(_tr(c, am, "badge-bg", hide_contacts))
             continue
-        if bg == "eligible" and dr in ("pass", "negative/pass"):
+        rwp = c.get("rwp_score") or 0
+        # RWP 1 or below -- exclude from client view entirely
+        if rwp <= 1:
+            continue
+        # RWP 11 (FEDEX_ACTIVE) -- always Badge Ready regardless of BG/drug
+        if rwp == 11:
             badge.append(_tr(c, am, "badge-bg", hide_contacts))
+        elif bg == "eligible" and dr in ("pass", "negative/pass"):
+            badge.append(_tr(c, am, "badge-bg", hide_contacts))
+        elif bg == "eligible":
+            # BG cleared but drug not yet started -- show in prog awaiting drug
+            prog.append(_tr(c, am, hide_contacts=hide_contacts))
         elif bg == "in progress" or (bg == "needs further review" and dr in ("in progress", "pass", "negative/pass")):
             prog.append(_tr(c, am, hide_contacts=hide_contacts))
         else:
