@@ -1088,7 +1088,7 @@ def _tr(c, am, cls="", hide_contacts=False):
       <td>{_pill(c.get("rwp_score"), c.get("rwp_classification"))}</td>
       <td>{_bc(c.get("background_status"))}</td>
       <td>{_bc(c.get("drug_test_status"))}</td>
-      <td>{_ck(c.get("gcic_uploaded"))}</td>
+      <td>{"&mdash;" if c.get("background_status") == "Eligible" and not c.get("gcic_uploaded") else _ck(c.get("gcic_uploaded"))}</td>
       <td>{_ck(c.get("mec_uploaded"))}</td>
       <td>{_ck(c.get("dl_verified"))}</td>
       <td>{qc}</td><td>{rd}</td>
