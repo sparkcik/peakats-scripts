@@ -1146,7 +1146,7 @@ def client_dashboard(token):
     cid_filter = f"client_id=in.({','.join(COMBINED_LOCS)})" if IS_COMBINED else f"client_id=eq.{client_id}"
     cands = _supa_get(
         f"candidates?{cid_filter}"
-        "&status=not.in.(Rejected,Hired,Transferred)"
+        "&status=not.in.(Rejected,Hired,Transferred,Expired)"
         "&background_status=in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
         "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
@@ -1160,7 +1160,7 @@ def client_dashboard(token):
     # Pre-submission count
     pre = _supa_get(
         f"candidates?{cid_filter}"
-        "&status=not.in.(Rejected,Hired,Transferred)"
+        "&status=not.in.(Rejected,Hired,Transferred,Expired)"
         "&background_status=not.in.(Eligible,In Progress,Needs Further Review,Collection Event Review)"
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
         "&select=id"
