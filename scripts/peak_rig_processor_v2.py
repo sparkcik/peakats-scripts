@@ -143,7 +143,7 @@ class ResumeProcessor:
         
         # Configure Gemini
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('models/gemini-3-flash')
+        self.model = genai.GenerativeModel('models/gemini-2.0-flash')
         
         self.engine = None
         self.create_unmatched = create_unmatched
