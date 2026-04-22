@@ -1091,6 +1091,7 @@ def _tr(c, am, cls="", hide_contacts=False):
       <td>{"&mdash;" if c.get("background_status") == "Eligible" and not c.get("gcic_uploaded") else _ck(c.get("gcic_uploaded"))}</td>
       <td>{_ck(c.get("mec_uploaded"))}</td>
       <td>{_ck(c.get("dl_verified"))}</td>
+      <td style="font-size:11px;color:var(--text2)">{c.get("fedex_id") or "&mdash;"}</td>
       <td>{qc}</td><td>{rd}</td>
       <td><select class="hire-sel{sc}" onchange="onAction({cid},this)">
         <option value="none"{"selected" if a=="none" else ""}>-- Select --</option>
@@ -1111,7 +1112,7 @@ def _tbl(rows, extra=True):
     extra_cols = "<th>QCert</th><th>Road</th>" if extra else ""
     return f'''<div class="tbl-wrap"><table><thead><tr>
       <th style="text-align:left">Candidate</th><th>Station</th><th>Profile</th><th>Background</th><th>Drug</th>
-      <th>GCIC</th><th>MEC</th><th>DL</th>{extra_cols}<th>Hiring Status</th><th>Notes</th>
+      <th>GCIC</th><th>MEC</th><th>DL</th><th>FedEx#</th>{extra_cols}<th>Hiring Status</th><th>Notes</th>
     </tr></thead><tbody>{"".join(rows)}</tbody></table></div>'''
 
 @app.route("/d/<token>", methods=["GET"])
@@ -1151,7 +1152,7 @@ def client_dashboard(token):
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
         "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
         "background_status,drug_test_status,gcic_uploaded,mec_uploaded,dl_verified,"
-        "qcert_completed_at,road_test_date,client_id"
+        "qcert_completed_at,road_test_date,client_id,fedex_id"
         "&order=client_id.asc,rwp_score.desc.nullslast"
     )
     if not isinstance(cands, list):
@@ -1177,7 +1178,7 @@ def client_dashboard(token):
         "&or=(compliance_override.is.null,compliance_override.eq.false)"
         "&select=id,first_name,last_name,email,phone,rwp_score,rwp_classification,"
         "background_status,drug_test_status,gcic_uploaded,mec_uploaded,dl_verified,"
-        "qcert_completed_at,road_test_date,client_id"
+        "qcert_completed_at,road_test_date,client_id,fedex_id"
     )
     if isinstance(rwp11, list):
         existing_ids = {c["id"] for c in cands}
@@ -1293,7 +1294,7 @@ def client_dashboard(token):
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PK | {label.split(" --")[0].split(" —")[0].strip()}</title>
+<title>PEAK Pipeline</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
