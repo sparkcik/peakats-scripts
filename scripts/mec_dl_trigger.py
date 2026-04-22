@@ -8,12 +8,12 @@ MEC OUTREACH -- fire when:
   drug_test_status IN ('Pass', 'In Progress')
   AND background_status NOT IN ('Not Started', 'Ineligible')
   AND mec_dl_collection_stage IS NULL
-  AND status NOT IN ('Rejected', 'Hired', 'Transferred')
+  AND status NOT IN ('Rejected', 'Hired', 'Transferred', 'Expired')
   AND compliance_override IS NOT TRUE
 
 RE-ENGAGEMENT -- fire when:
   drug_test_status IN ('Expired', 'No Show')
-  AND status NOT IN ('Rejected', 'Hired', 'Transferred')
+  AND status NOT IN ('Rejected', 'Hired', 'Transferred', 'Expired')
   AND mec_dl_collection_stage IS NULL
   AND compliance_override IS NOT TRUE
 
