@@ -93,7 +93,7 @@ def apply_auto_reject(conn, candidate_id, bg_status, drug_status, text_func):
                 reject_reason = 'fadv_ineligible',
                 updated_at = NOW()
             WHERE id = :id
-            AND status NOT IN ('Hired', 'Rejected')
+            AND status NOT IN ('Hired', 'Rejected', 'Expired')
         """), {"id": candidate_id})
         conn.commit()
         reason = 'BG Ineligible' if bg_status == 'Ineligible' else 'Drug Fail'
