@@ -52,7 +52,7 @@ SB_HEADERS = {
 
 
 def enforce_blackout(dt):
-    """Push any send time outside 7:30AM-7:30PM ET to next 7:30AM ET window."""
+    """Push any send time outside 7:30AM-9PM ET to next 7:30AM ET window."""
     try:
         import pytz
     except ImportError:
@@ -63,8 +63,8 @@ def enforce_blackout(dt):
         dt = _tz.utc.localize(dt)
     dt_et = dt.astimezone(ET)
     hour, minute = dt_et.hour, dt_et.minute
-    # Blackout: before 7:30AM or at/after 7:30PM
-    in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour > 19) or (hour == 19 and minute >= 30)
+    # Blackout: before 7:30AM or at/after 9PM
+    in_blackout = (hour < 7) or (hour == 7 and minute < 30) or (hour >= 21)
     if in_blackout:
         delivery = dt_et.replace(hour=7, minute=30, second=0, microsecond=0)
         if (hour > 19) or (hour == 19 and minute >= 30):
