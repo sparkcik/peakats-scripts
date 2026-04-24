@@ -1095,6 +1095,7 @@ def _tr(c, am, cls="", hide_contacts=False):
       <td>{qc}</td><td>{rd}</td>
       <td><select class="hire-sel{sc}" onchange="onAction({cid},this)">
         <option value="none"{"selected" if a=="none" else ""}>-- Select --</option>
+        <option value="contacting"{"selected" if a=="contacting" else ""}>Contacting</option>
         <option value="on_deck"{"selected" if a=="on_deck" else ""}>On Deck</option>
         <option value="hired"{"selected" if a=="hired" else ""}>Hired</option>
         <option value="not_a_fit"{"selected" if a=="not_a_fit" else ""}>Not a fit</option>
@@ -1354,6 +1355,7 @@ tr:hover td{{background:var(--tbl-hover)}}
 .pill{{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;color:#fff;display:inline-block}}
 .elig{{color:var(--elig);font-weight:600}}.inelig{{color:var(--inelig);font-weight:600}}.prog{{color:var(--prog);font-weight:600}}
 .hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid var(--sel-border);font-size:11px;font-family:'DM Sans',sans-serif;background:var(--sel-bg);color:var(--sel-text);cursor:pointer;width:118px}}
+.hire-sel.s-contacting{{background:#fff8e1;border-color:#BA7517;color:#BA7517;font-weight:600}}
 .hire-sel.s-on_deck{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
 .hire-sel.s-hired{{background:#e8faf2;border-color:#0F6E56;color:#0F6E56;font-weight:600}}
 .hire-sel.s-not_a_fit{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
