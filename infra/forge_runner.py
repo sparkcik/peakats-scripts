@@ -1486,3 +1486,24 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)
 # cache bust Sat Apr 18 13:30:16 EDT 2026
+
+
+# ============================================================
+# SCHEDULER AUTO-START (gunicorn-safe module-level bootstrap)
+# Gunicorn imports `app` from this module but never executes
+# `if __name__ == "__main__":`. Start schedulers on import instead.
+# Guard prevents duplicate starts if module is imported multiple times.
+# ============================================================
+_SCHEDULERS_STARTED = globals().get("_SCHEDULERS_STARTED", False)
+if not _SCHEDULERS_STARTED:
+    log.info("=" * 60)
+    log.info("forge-runner v1.5.1 scheduler bootstrap (gunicorn-safe)")
+    log.info("Scheduler: pg_cron is primary. Internal scheduler is backup.")
+    log.info("=" * 60)
+    threading.Thread(target=_sms_scheduler, daemon=True, name="sms_scheduler").start()
+    threading.Thread(target=_gcic_outreach_scheduler, daemon=True, name="gcic_outreach_scheduler").start()
+    threading.Thread(target=_mec_outreach_scheduler, daemon=True, name="mec_outreach_scheduler").start()
+    threading.Thread(target=_fadv_profile_reminder_scheduler, daemon=True, name="fadv_profile_reminder_scheduler").start()
+    threading.Thread(target=_daily_scheduler, daemon=True, name="daily_scheduler").start()
+    _SCHEDULERS_STARTED = True
+    log.info("All 5 schedulers enqueued at module load")
