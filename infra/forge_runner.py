@@ -1070,7 +1070,7 @@ def _tr(c, am, cls="", hide_contacts=False):
         'cbm': 'NOR', 'cnf_services': 'CNF', 'gods_vision': 'AUS',
         'rade_logistics': 'BRZ',
         'deera_express': 'BRZ',
-        'a_to_z_route_services': 'KSW', 'a_to_z': 'KSW',
+        'a_to_z_route_services': 'MAR',
     }
     cid_val = c.get("client_id","")
     station_label = station_map.get(cid_val, cid_val.upper()[:3])
@@ -1078,7 +1078,7 @@ def _tr(c, am, cls="", hide_contacts=False):
         'legacy_chattanooga': '#185FA5', 'legacy_ooltewah': '#0F6E56', 'legacy_tuscaloosa': '#c8a84b',
         'cbm': '#1a3a2a', 'cnf_services': '#1a3a2a', 'gods_vision': '#BA7517', 'rade_logistics': '#BA7517',
         'deera_express': '#BA7517',
-        'a_to_z_route_services': '#185FA5', 'a_to_z': '#185FA5',
+        'a_to_z_route_services': '#1a3a2a',
     }
     station_color = station_colors.get(cid_val, '#888')
     station_pill = f'<span style="background:{station_color};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600">{station_label}</span>'
@@ -1095,7 +1095,7 @@ def _tr(c, am, cls="", hide_contacts=False):
       <td>{qc}</td><td>{rd}</td>
       <td><select class="hire-sel{sc}" onchange="onAction({cid},this)">
         <option value="none"{"selected" if a=="none" else ""}>-- Select --</option>
-        <option value="contacting"{"selected" if a=="contacting" else ""}>Contacting</option>
+        <option value="on_deck"{"selected" if a=="on_deck" else ""}>On Deck</option>
         <option value="hired"{"selected" if a=="hired" else ""}>Hired</option>
         <option value="not_a_fit"{"selected" if a=="not_a_fit" else ""}>Not a fit</option>
       </select>
@@ -1354,7 +1354,7 @@ tr:hover td{{background:var(--tbl-hover)}}
 .pill{{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;color:#fff;display:inline-block}}
 .elig{{color:var(--elig);font-weight:600}}.inelig{{color:var(--inelig);font-weight:600}}.prog{{color:var(--prog);font-weight:600}}
 .hire-sel{{padding:4px 6px;border-radius:6px;border:1px solid var(--sel-border);font-size:11px;font-family:'DM Sans',sans-serif;background:var(--sel-bg);color:var(--sel-text);cursor:pointer;width:118px}}
-.hire-sel.s-contacting{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
+.hire-sel.s-on_deck{{background:#e8f4ff;border-color:#185FA5;color:#185FA5;font-weight:600}}
 .hire-sel.s-hired{{background:#e8faf2;border-color:#0F6E56;color:#0F6E56;font-weight:600}}
 .hire-sel.s-not_a_fit{{background:#fef2f2;border-color:#A32D2D;color:#A32D2D;font-weight:600}}
 .notes-input{{width:150px;padding:4px 6px;border-radius:6px;border:1px solid var(--notes-border);font-size:11px;font-family:'DM Sans',sans-serif;resize:none;height:32px;background:var(--notes-bg);color:var(--notes-text)}}
@@ -1486,57 +1486,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5678))
     app.run(host="0.0.0.0", port=port, debug=False)
 # cache bust Sat Apr 18 13:30:16 EDT 2026
-
-
-# ============================================================
-# SCHEDULER AUTO-START (gunicorn-safe module-level bootstrap)
-# Gunicorn imports `app` from this module but never executes
-# `if __name__ == "__main__":`. Start schedulers on import instead.
-# Guard prevents duplicate starts if module is imported multiple times.
-# ============================================================
-# ============================================================
-# SCHEDULER LEADER ELECTION (Postgres advisory lock, cluster-wide)
-# Only ONE gunicorn worker in ONE machine holds the lease.
-# All others stay idle. Lease auto-releases on process death.
-# Lock ID: 9471 (arbitrary but fixed; collision-safe).
-# ============================================================
-_SCHEDULERS_STARTED = globals().get("_SCHEDULERS_STARTED", False)
-
-def _try_acquire_scheduler_lease():
-    try:
-        import psycopg2
-        db_url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
-        if not db_url:
-            log.warning("[scheduler-lease] no DB URL configured; skipping lease")
-            return None
-        conn = psycopg2.connect(db_url)
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("SELECT pg_try_advisory_lock(9471)")
-        got = cur.fetchone()[0]
-        if got:
-            return conn
-        else:
-            cur.close()
-            conn.close()
-            return None
-    except Exception as e:
-        log.error(f"[scheduler-lease] acquire failed: {e}")
-        return None
-
-if not _SCHEDULERS_STARTED:
-    _lease_conn = _try_acquire_scheduler_lease()
-    if _lease_conn is not None:
-        log.info("=" * 60)
-        log.info("forge-runner v1.5.2 scheduler LEADER (lease 9471 acquired)")
-        log.info("Scheduler: pg_cron is primary. Internal scheduler is backup.")
-        log.info("=" * 60)
-        threading.Thread(target=_sms_scheduler, daemon=True, name="sms_scheduler").start()
-        threading.Thread(target=_gcic_outreach_scheduler, daemon=True, name="gcic_outreach_scheduler").start()
-        threading.Thread(target=_mec_outreach_scheduler, daemon=True, name="mec_outreach_scheduler").start()
-        threading.Thread(target=_fadv_profile_reminder_scheduler, daemon=True, name="fadv_profile_reminder_scheduler").start()
-        threading.Thread(target=_daily_scheduler, daemon=True, name="daily_scheduler").start()
-        _SCHEDULERS_STARTED = True
-        log.info("All 5 schedulers enqueued at module load (leader only)")
-    else:
-        log.info("[scheduler-lease] another worker holds lease 9471; running as follower (no schedulers)")
