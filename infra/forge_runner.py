@@ -1494,16 +1494,49 @@ if __name__ == "__main__":
 # `if __name__ == "__main__":`. Start schedulers on import instead.
 # Guard prevents duplicate starts if module is imported multiple times.
 # ============================================================
+# ============================================================
+# SCHEDULER LEADER ELECTION (Postgres advisory lock, cluster-wide)
+# Only ONE gunicorn worker in ONE machine holds the lease.
+# All others stay idle. Lease auto-releases on process death.
+# Lock ID: 9471 (arbitrary but fixed; collision-safe).
+# ============================================================
 _SCHEDULERS_STARTED = globals().get("_SCHEDULERS_STARTED", False)
+
+def _try_acquire_scheduler_lease():
+    try:
+        import psycopg2
+        db_url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
+        if not db_url:
+            log.warning("[scheduler-lease] no DB URL configured; skipping lease")
+            return None
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT pg_try_advisory_lock(9471)")
+        got = cur.fetchone()[0]
+        if got:
+            return conn
+        else:
+            cur.close()
+            conn.close()
+            return None
+    except Exception as e:
+        log.error(f"[scheduler-lease] acquire failed: {e}")
+        return None
+
 if not _SCHEDULERS_STARTED:
-    log.info("=" * 60)
-    log.info("forge-runner v1.5.1 scheduler bootstrap (gunicorn-safe)")
-    log.info("Scheduler: pg_cron is primary. Internal scheduler is backup.")
-    log.info("=" * 60)
-    threading.Thread(target=_sms_scheduler, daemon=True, name="sms_scheduler").start()
-    threading.Thread(target=_gcic_outreach_scheduler, daemon=True, name="gcic_outreach_scheduler").start()
-    threading.Thread(target=_mec_outreach_scheduler, daemon=True, name="mec_outreach_scheduler").start()
-    threading.Thread(target=_fadv_profile_reminder_scheduler, daemon=True, name="fadv_profile_reminder_scheduler").start()
-    threading.Thread(target=_daily_scheduler, daemon=True, name="daily_scheduler").start()
-    _SCHEDULERS_STARTED = True
-    log.info("All 5 schedulers enqueued at module load")
+    _lease_conn = _try_acquire_scheduler_lease()
+    if _lease_conn is not None:
+        log.info("=" * 60)
+        log.info("forge-runner v1.5.2 scheduler LEADER (lease 9471 acquired)")
+        log.info("Scheduler: pg_cron is primary. Internal scheduler is backup.")
+        log.info("=" * 60)
+        threading.Thread(target=_sms_scheduler, daemon=True, name="sms_scheduler").start()
+        threading.Thread(target=_gcic_outreach_scheduler, daemon=True, name="gcic_outreach_scheduler").start()
+        threading.Thread(target=_mec_outreach_scheduler, daemon=True, name="mec_outreach_scheduler").start()
+        threading.Thread(target=_fadv_profile_reminder_scheduler, daemon=True, name="fadv_profile_reminder_scheduler").start()
+        threading.Thread(target=_daily_scheduler, daemon=True, name="daily_scheduler").start()
+        _SCHEDULERS_STARTED = True
+        log.info("All 5 schedulers enqueued at module load (leader only)")
+    else:
+        log.info("[scheduler-lease] another worker holds lease 9471; running as follower (no schedulers)")
